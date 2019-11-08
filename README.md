@@ -6,7 +6,7 @@ Karonte is a static analysis tool to detect multi-binary vulnerabilities in embe
 
 ## Overview
 
-![Overview](overview.png)
+<img src="overview.png" width="60%">
 
 ## Research paper
 
