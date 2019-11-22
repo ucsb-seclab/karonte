@@ -2,8 +2,6 @@
 
 Karonte is a static analysis tool to detect multi-binary vulnerabilities in embedded firmware.
 
-*Source code will be released soon!*
-
 ## Overview
 
 <img src="overview.png" width="60%">
@@ -27,4 +25,30 @@ If you use *Karonte* in a scientific publication, we would appreciate citations 
  year      = {2020}
 }
 ```
+
+## Repository Structure
+
+There are four main directories:
+- **tool**: karonte python files
+- **firmware**: karonte firmware dataset
+- **configs**: configuration files to analyze the firmware samples in the dataset
+- **eval**: scripts to run the various evaluations on karonte
+
+## Run Karonte
+
+To  run karonte, from the root directory, just run
+> **SYNOPSIS**
+> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; python **tool/karonte.py** JSON_CONFIG_FILE [LOG_NAME]
+>
+> **DESCRIPTION**
+> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;runs karonte on the firmware sample represented by the JSON_CONFIG_FILE, and  save the results in LOG_NAME
+>
+> **EXAMPLE**
+> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;python tool/karonte.py config/NETGEAR/r_7800.json
+> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;It runs karonte on the R7800 NETGEAR firmware
+
+By default, results are saved in **/tmp/** with the suffix **Karonte.txt**.
+
+To inspect the generated alerts, just run:
+> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; python **tool/pretty_print.py** LOG_NAME
 
