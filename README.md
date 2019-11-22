@@ -53,5 +53,5 @@ To inspect the generated alerts, just run:
 > &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; python **tool/pretty_print.py** LOG_NAME
 
 ## Docker
-A dockerized version of Karonte ready to use can be found [[here]](https://hub.docker.com/repository/docker/badnack/karonte)
+A dockerized version of Karonte ready to use can be found [here](https://hub.docker.com/repository/docker/badnack/karonte)
 
