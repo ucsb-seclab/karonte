@@ -11,7 +11,7 @@ Karonte is a static analysis tool to detect multi-binary vulnerabilities in embe
 We present our approach and the findings of this work in the following research paper:
 
 **KARONTE: Detecting Insecure Multi-binary Interactions in Embedded Firmware** 
-[[PDF]](https://conand.me/publications/redini-karonte-2020.pdf)  
+[[PDF]](https://www.badnack.it/static/papers/University/karonte.pdf)  
 Nilo Redini, Aravind Machiry, Ruoyu Wang, Chad Spensky, Andrea Continella, Yan Shoshitaishvili, Christopher Kruegel, Giovanni Vigna.
 *To appear in Proceedings of the IEEE Symposium on Security & Privacy (S&P), May 2020*
 
