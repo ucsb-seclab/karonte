@@ -1,0 +1,1 @@
+{"bin": ["./firmware/lk/lk_unpatched"], "pickle_parsers": "", "stats": "False", "data_keys": [], "base_addr": "", "eg_source_addr": "0x8F61505C", "fw_path": "", "angr_explode_bins": [], "var_ord": ["2"], "glob_var": ["0x8f669400"], "arch": "", "only_string": "False"}

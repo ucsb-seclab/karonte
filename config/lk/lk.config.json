@@ -1,0 +1,1 @@
+{"bin": ["./firmware/lk/lk_latest"], "pickle_parsers": "", "stats": "False", "data_keys": [], "base_addr": "0x8F600000", "eg_source_addr": "0x8F621AEC", "fw_path": "", "angr_explode_bins": [], "var_ord": ["4"], "glob_var": ["8F6903C0"], "arch": "ARM32", "only_string": "False"}

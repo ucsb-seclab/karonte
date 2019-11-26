@@ -1,0 +1,1 @@
+{"bin": ["./firmware/NVIDIA/hboot.img"], "pickle_parsers": "", "stats": "False", "data_keys": [["0x70118034", "MMIO"]], "base_addr": "0x7000000", "eg_source_addr": "0x70076698", "fw_path": "", "angr_explode_bins": [], "var_ord": ["2"], "glob_var": [], "arch": "ARM", "only_string": "True"}
