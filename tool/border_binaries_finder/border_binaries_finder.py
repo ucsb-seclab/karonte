@@ -581,7 +581,7 @@ class BorderBinariesFinder:
             with open(pickle_file) as fp:
                 self._candidates, self._stats, self._multiplier = pickle.load(fp)
         else:
-            if pickle_file is None:
+            if not pickle_file:
                 abs_path = os.path.abspath(__file__)
                 pickle_dir = '/'.join(abs_path.split('/')[:-3]) + '/pickles/parser/'
                 rel_pickle_name = self._fw_path.replace('./firmware/', '').replace('/', '_').replace('.', '')
