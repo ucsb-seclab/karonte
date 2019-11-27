@@ -10,6 +10,8 @@ STR_LEN = 255
 ALLOWED_CHARS = string.digits + string.ascii_letters + '-/_'
 EXTENDED_ALLOWED_CHARS = ALLOWED_CHARS + "%,.;+=_)(*&^%$#@!~`|<>{}[]"
 
+DEFAULT_PICKLE_DIR = '/tmp/karonte/pickles/parser/'
+
 
 def populate_symbol_table(p):
     """
