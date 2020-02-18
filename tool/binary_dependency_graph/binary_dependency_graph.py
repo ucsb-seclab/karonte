@@ -308,8 +308,8 @@ class BinaryDependencyGraph:
                                   setter_getter.SetterGetter, semantic.Semantic]
 
         self._seed_bins = self._update_projects(self._seed_bins)
-        self._end_time = None
-        self._start_time = None
+        self._end_time = 0
+        self._start_time = 0
 
     @staticmethod
     def is_call(bb):
