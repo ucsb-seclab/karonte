@@ -554,6 +554,10 @@ class BorderBinariesFinder:
         # TODO: create directories that do not already exist in pickle_file
         log.info("Candidates pickled in " + pickle_file)
 
+        pickle_dir = '/'.join(pickle_file.split('/')[:-1])
+        if not os.path.exists(pickle_dir):
+            os.makedirs(pickle_dir)
+
         fp = open(pickle_file, 'w')
         pickle.dump((self._candidates, self._stats, self._multiplier), fp)
         fp.close()
@@ -582,14 +586,9 @@ class BorderBinariesFinder:
                 self._candidates, self._stats, self._multiplier = pickle.load(fp)
         else:
             if not pickle_file:
-                abs_path = os.path.abspath(__file__)
-                pickle_dir = '/'.join(abs_path.split('/')[:-3]) + '/pickles/parser/'
-                rel_pickle_name = self._fw_path.replace('./firmware/', '').replace('/', '_').replace('.', '')
-                vendor = self._fw_path.split('/')[2]
-
-                if not os.path.exists(pickle_dir + vendor):
-                    os.makedirs(pickle_dir + vendor)
-                pickle_file = pickle_dir + vendor + '/' + rel_pickle_name + '.pk'
+                pickle_dir = DEFAULT_PICKLE_DIR
+                rel_pickle_name = self._fw_path.replace('/', '_').replace('.', '')
+                pickle_file = pickle_dir + '/' + rel_pickle_name + '.pk'
 
             self._collect_stats(bins)
             self._apply_parsing_score(50000, 50000)

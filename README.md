@@ -1,4 +1,6 @@
 # Karonte
+[![License](https://img.shields.io/github/license/angr/angr.svg)](https://github.com/angr/angr/blob/master/LICENSE)
+
 
 Karonte is a static analysis tool to detect multi-binary vulnerabilities in embedded firmware.
 
