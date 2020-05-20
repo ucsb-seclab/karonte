@@ -14,14 +14,14 @@ We present our approach and the findings of this work in the following research 
 
 **KARONTE: Detecting Insecure Multi-binary Interactions in Embedded Firmware** 
 [[PDF]](https://www.badnack.it/static/papers/University/karonte.pdf)  
-Nilo Redini, Aravind Machiry, Ruoyu Wang, Chad Spensky, Andrea Continella, Yan Shoshitaishvili, Christopher Kruegel, Giovanni Vigna.
-*To appear in Proceedings of the IEEE Symposium on Security & Privacy (S&P), May 2020*
+Nilo Redini, Aravind Machiry, Ruoyu Wang, Chad Spensky, Andrea Continella, Yan Shoshitaishvili, Christopher Kruegel, Giovanni Vigna.  
+*In Proceedings of the IEEE Symposium on Security & Privacy (S&P), May 2020*
 
 If you use *Karonte* in a scientific publication, we would appreciate citations using this **Bibtex** entry:
 ``` tex
 @inproceedings{redini_karonte_20,
  author    = {Nilo Redini and Aravind Machiry and Ruoyu Wang and Chad Spensky and Andrea Continella and Yan Shoshitaishvili and Christopher Kruegel and Giovanni Vigna},
- booktitle = {To appear in Proceedings of the IEEE Symposium on Security & Privacy (S&P)},
+ booktitle = {In Proceedings of the IEEE Symposium on Security & Privacy (S&P)},
  month     = {May},
  title     = {KARONTE: Detecting Insecure Multi-binary Interactions in Embedded Firmware},
  year      = {2020}
