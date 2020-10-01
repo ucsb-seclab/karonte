@@ -31,10 +31,11 @@ If you use *Karonte* in a scientific publication, we would appreciate citations 
 ## Repository Structure
 
 There are four main directories:
-- **tool**: karonte python files
-- **firmware**: karonte firmware dataset
+- **tool**: Karonte python files
+- **firmware**: Karonte firmware dataset
 - **configs**: configuration files to analyze the firmware samples in the dataset
-- **eval**: scripts to run the various evaluations on karonte
+- **eval**: scripts to run the various evaluations on Karonte
+- **karonte-viz**: script to visualize the results produced by Karonte
 
 ## Run Karonte
 
