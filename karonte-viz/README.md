@@ -2,7 +2,7 @@
 
 Simple script to visualize the results of an analysis performed by Karonte.
 
-![Screenshot](karonte-viz/images/screenshot.png)
+![Screenshot](images/screenshot.png)
 
 
 ### Install dependencies
