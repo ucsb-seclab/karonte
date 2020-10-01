@@ -1,12 +1,15 @@
 import signal
 import time
-from binary_dependency_graph.bdp_enum import RoleInfo
+from binary_dependency_graph.bdp_enum import RoleInfo, Role
 from utils import *
-
+import json
+import copy
+import os
 
 class FileLogger:
-    def __init__(self, filename):
-        self._fp = open(filename, 'w', 0)
+    def __init__(self, fw, filename):
+        self._fw = fw
+        self._filename = filename + '.json'
         self._logged_paths = set()
         self._start_time = None
         self._end_time = None
@@ -70,49 +73,7 @@ class FileLogger:
 
     @property
     def name(self):
-        return self._fp.name
-
-    def _get_stats_cpfs(self, bdg):
-        """
-        Retrieves the stats of the used CPFs
-        :param bdg: BDG
-        :return: states of the used CPFs
-        """
-
-        bins = {}
-        for node in bdg.nodes:
-            stats = [(x[RoleInfo.DATAKEY], x[RoleInfo.CPF]) for y in node.role_info.values() for x in y]
-            n_env = len([s for s in stats if s[1] == 'environment'])
-            n_semantic = len([s for s in stats if s[1] == 'semantic'])
-            n_socket = len([s for s in stats if s[1] == 'socket'])
-            n_file = len([s for s in stats if s[1] == 'file'])
-            n_setter_getter = len([s for s in stats if s[1] == 'setter_getter'])
-            tot_key = len(stats)
-
-            un_stats = list(set([(x[RoleInfo.DATAKEY], x[RoleInfo.CPF]) for y in node.role_info.values() for x in y]))
-            un_n_env = len([s for s in un_stats if s[1] == 'environment'])
-            un_n_semantic = len([s for s in un_stats if s[1] == 'semantic'])
-            un_n_socket = len([s for s in un_stats if s[1] == 'socket'])
-            un_n_file = len([s for s in un_stats if s[1] == 'file'])
-            un_n_setter_getter = len([s for s in un_stats if s[1] == 'setter_getter'])
-            un_tot_key = len(un_stats)
-
-            bins[node.bin] = {
-                'tot_env': str(n_env),
-                'tot_sem': str(n_semantic),
-                'tot_socket': str(n_socket),
-                'tot_file': str(n_file),
-                'tot_set_get': str(n_setter_getter),
-                'tot_data_key': str(tot_key),
-
-                'unique_env': str(un_n_env),
-                'unique_sem': str(un_n_semantic),
-                'unique_socket': str(un_n_socket),
-                'unique_file': str(un_n_file),
-                'unique_set_get': str(un_n_setter_getter),
-                'unique_data_key': str(un_tot_key),
-            }
-        return bins
+        return self._filename
 
     def start_logging(self):
         """
@@ -122,26 +83,32 @@ class FileLogger:
         """
 
         self._start_time = time.time()
-        self.log_line("Logging started. Time: %s\n" % str(self._start_time))
+        data = {"firmware_path": self._fw, "firmware_name": self._fw.split('/')[-1], "logging_started": self._start_time}
+        self.log_line(data)
 
-    def log_line(self, line):
+    def log_line(self, cnt):
         """
         Log line
-        :param line: line
+        :param cnt: content in a dictionary form
         :return: None
         """
 
-        f = self._fp
-        f.write(str(line) + '\n')
+        if not os.path.isfile(self._filename):
+            with open(self._filename, "w") as file:
+                json.dump({}, file)
+
+        with open(self._filename, "r+") as file:
+            data = json.load(file)
+            data.update(cnt)
+            file.seek(0)
+            json.dump(data, file)
 
     def close_log(self):
         """
         Closes the log
         :return:  None
         """
-
-        self.log_line("Analysis Terminated.")
-        self._fp.close()
+        pass
 
     def save_bdg_stats(self, bbf, bdg):
         """
@@ -154,22 +121,40 @@ class FileLogger:
 
         bdg_bins = [b.bin for b in bdg.nodes]
         bb_fw = bbf.get_bb_fw()
-        fathers = [f for f, c in bdg.graph.items() if len(c) != 0]
         orphans = [n for n in bdg.nodes if n.orphan]
 
-        self.log_line("\nBDG results\n")
-        self.log_line("==============\n\n")
-        self.log_line("BDG time %s seconds\n" % str(bdg.analysis_time()))
-        self.log_line("Graph\n")
-        self.log_line(str(bdg.graph))
-        self.log_line("\nPlugins and Data Keys\n")
-        self.log_line(str(self._get_stats_cpfs(bdg)))
-        self.log_line("Total Basic Block in BDG: %s" % str(sum([v for k, v in bb_fw.items() if k in bdg_bins])))
-        if fathers or orphans:
-            self.log_line("Multi-Bin: Yes")
-        else:
-            self.log_line("Multi-Bin: No")
-        self.log_line("\n==============\n")
+        data = {"bdg": {
+                    "basic_blocks": str(sum([v for k, v in bb_fw.items() if k in bdg_bins])),
+                    "analysis_time": str(bdg.analysis_time()),
+                    "orphans": [x.bin for  x in orphans]
+                     }
+                }
+
+        for node in bdg.nodes:
+            data['bdg'][node.bin] = []
+            info_bin = data['bdg'][node.bin]
+
+            for succ in bdg.graph[node]:
+                for info in succ.role_info.values():
+                    for elem in info:
+                        if elem[RoleInfo.ROLE] != Role.GETTER:
+                            continue
+
+                        dk = elem[RoleInfo.DATAKEY]
+                        setters = [x for y in node.role_info.values() for x in y if x[RoleInfo.DATAKEY] == dk and \
+                                  x[RoleInfo.ROLE] in (Role.SETTER, Role.SETTER_GETTER)]
+
+                        if not setters:
+                            continue
+
+                        for setter in setters:
+                            metadata = {
+                                'cpf_in': setter[RoleInfo.CPF],
+                                'cpf_out': elem[RoleInfo.CPF],
+                                'data_key': dk,
+                            }
+                            info_bin.append(copy.deepcopy(metadata))
+        self.log_line(data)
 
     def save_parser_stats(self, bbf):
         """
@@ -184,21 +169,17 @@ class FileLogger:
         bb_fw = bbf.get_bb_fw()
         tot_bins = bbf.get_total_bins_fw()
 
-        self.log_line("\nBorder Binaries Sesults\n")
-        self.log_line("==============\n\n")
+        data = {
+            "num_binaries": str(len(tot_bins)),
+            "basic_blocks": str(sum(bb_fw.values())),
+            "border_binaries": {
+                "analysis_time": str(ana_time),
+                "binaries": bb,
+                "basic_blocks": str(sum([v for k, v in bb_fw.items() if k in bb]))
+            }
+        }
 
-        self.log_line("Total firmware Binaries: %s" % str(len(tot_bins)))
-        self.log_line("Total Basic block in the firmware sample: %s" % str(sum(bb_fw.values())))
-        self.log_line("Parser time %s seconds\n" % str(ana_time))
-
-        if not bb:
-            self.log_line("Border binary finder module did not find any border binaries.\n")
-        else:
-            self.log_line("Border Binaries: %s" % str(', '.join(bb)))
-            self.log_line("Total Basic Block in Border Binaries: %s" %
-                          str(sum([v for k, v in bb_fw.items() if k in bb])))
-
-        self.log_line("==============\n")
+        self.log_line(data)
 
     def save_loop_info(self, name, path, addr, cond, pl_name="Unknown", report_time=None):
         """

@@ -34,7 +34,7 @@ class Karonte:
             else:
                 log_path = DEFAULT_LOG_PATH
 
-        self._klog = FileLogger(log_path)
+        self._klog = FileLogger(self._fw_path, log_path)
         self._add_stats = 'true' == self._config['stats'].lower()
 
         log.info("Logging at: %s" % log_path)
