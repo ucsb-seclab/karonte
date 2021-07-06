@@ -1,18 +1,19 @@
-import logging
-import angr
 import itertools
-import simuvex
+import logging
+import os
 import time
+from typing import Callable
 
-from utils import *
-from cpfs import environment, file, socket, semantic, setter_getter
-from bdp_enum import *
+import angr
 
-sys.path.append(os.path.abspath(os.path.join(dirname(abspath(__file__)), '../../../tool')))
-from taint_analysis import coretaint, summary_functions
-from taint_analysis.coretaint import TimeOutException
-from taint_analysis.utils import ordered_argument_regs, get_ord_arguments_call, get_arity, get_any_arguments_call
+from claripy import BVV
 
+from binary_dependency_graph.bdp_enum import *
+from binary_dependency_graph.cpfs import environment, file, socket, semantic, setter_getter
+from binary_dependency_graph.utils import *
+from taint_analysis.coretaint import TimeOutException, CoreTaint
+from taint_analysis.utils import get_arity, arg_reg_name, arg_reg_names, get_arguments_call_with_instruction_address, \
+    get_initial_state
 
 angr.loggers.disable_root_logger()
 angr.logging.disable(logging.ERROR)
@@ -31,7 +32,7 @@ class BdgNode:
         :param cfg: angr cfg
         :param cpf_used: CPF used to infer the role of this binary
         :param is_root: flag representing whether this node is a root node or not
-        :param is_orphan: flag representing whether this node is an orphan (i.e., could not find its parents) node or not
+        :param is_orphan: flag representing whether this node is an orphan (i.e. could not find its parents) node or not
         :param is_leaf: flag representing whether this node is a leaf node or not
         """
 
@@ -56,7 +57,7 @@ class BdgNode:
         return self._bin
 
     def __repr__(self):
-        return "<BdgNode %s>" % self._bin
+        return f"<BdgNode {self._bin}>"
 
     def __eq__(self, o):
         return self._bin == o.bin
@@ -207,6 +208,7 @@ class BdgNode:
         # we have to refresh everything
         self._role_info = {}
 
+        self._cpfs_used = list(set(self._cpfs_used))
         for pl in self._cpfs_used:
             pl.discover_data_keys()
 
@@ -227,7 +229,8 @@ class BdgNode:
         # get new binaries from the discovery cpfs, if any
         if not self._cpfs_used:
             return []
-
+        # remove possible duplicates
+        self._cpfs_used = list(set(self._cpfs_used))
         cpfs_bins = [pl.discover_new_binaries() for pl in self._cpfs_used]
         return [item for bins in cpfs_bins for item in bins]
 
@@ -268,12 +271,12 @@ class BinaryDependencyGraph:
         if logger_obj:
             log = logger_obj
 
-        self._arch = str(config['arch']) if config['arch'] else None
-        self._base_addr = int(config['base_addr'], 16) if config['base_addr'] else None
-        self._keys_to_taint = [[int(x[0], 16), x[1]] for x in config['data_keys']]
-        self._arg_to_taint = map(lambda x: int(x, 16), config['glob_var'])
-        self._source_addr = int(config['eg_source_addr'], 16) if config['eg_source_addr'] else None
-        self._ignore_bins = config['angr_explode_bins'] if config['angr_explode_bins'] else []
+        self._arch = str(config['arch']) if 'arch' in config else None
+        self._base_addr = int(config['base_addr'], 16) if 'base_addr' in config else None
+        self._keys_to_taint = [[int(x[0], 16), x[1]] for x in config['data_keys']] if 'data_keys' in config else None
+        self._arg_to_taint = map(lambda x: int(x, 16), config['glob_var']) if 'glob_var' in config else None
+        self._source_addr = int(config['eg_source_addr'], 16) if 'eg_source_addr' in config else None
+        self._ignore_bins = config['angr_explode_bins'] if 'angr_explode_bins' in config else []
 
         self._f_arg_vals = []
         self._seed_bins = seed_bins
@@ -304,7 +307,7 @@ class BinaryDependencyGraph:
 
         self._enabled_cpfs = cpfs
         if not cpfs:
-            self._enabled_cpfs = [environment.Environment,  file.File, socket.Socket,
+            self._enabled_cpfs = [environment.Environment, file.File, socket.Socket,
                                   setter_getter.SetterGetter, semantic.Semantic]
 
         self._seed_bins = self._update_projects(self._seed_bins)
@@ -357,7 +360,7 @@ class BinaryDependencyGraph:
         added_bins = []
 
         for b in bins:
-            bin_name = b.split('/')[-1]
+            bin_name = os.path.basename(b)
             if any([nb in bin_name for nb in self._ignore_bins]):
                 continue
 
@@ -380,7 +383,7 @@ class BinaryDependencyGraph:
                         blob = False
                         self._projects[b] = angr.Project(b, auto_load_libs=False)
 
-                    log.info("Building %s CFG (this may take some time)" % bin_name)
+                    log.info(f"Building {bin_name} CFG (this may take some time)")
                     self._cfgs[b] = self._projects[b].analyses.CFG(collect_data_references=True,
                                                                    extra_cross_references=True)
                     memcplike = find_memcmp_like(self._projects[b], self._cfgs[b]) if blob else []
@@ -391,10 +394,9 @@ class BinaryDependencyGraph:
                                 memcmp_like_functions=memcplike, log=log)
                         self._cpfs[b].append(c)
                     added_bins.append(b)
-                except:
-                    log.warning("Failed to add %s" % b)
+                except Exception as e:
+                    log.warning(f"Failed to add {b}")
                     self._ignore_bins.append(bin_name)
-
         return added_bins
 
     def _check_key_usage(self, current_path, *_, **__):
@@ -406,91 +408,57 @@ class BinaryDependencyGraph:
         :return: None
         """
 
-        # retrieve and save the values of arguments of the function where we start the taint
-        # analyis
+        # retrieve and save the values of arguments of the function where we start the taint analyis
         if not self._f_arg_vals and self._set_f_vals:
             self._set_f_vals = False
             arity = max(get_arity(self._current_p, self._current_f_addr), DEF_ROLE_ARITY)
-            for narg in xrange(arity):
-                dst_reg = ordered_argument_regs[self._current_p.arch.name][narg]
-                dst_cnt = getattr(current_path.active[0].regs, self._current_p.arch.register_names[dst_reg])
+            for narg in range(arity):
+                dst_cnt = getattr(current_path.active[0].regs, arg_reg_name(self._current_p, narg))
                 self._f_arg_vals.append(dst_cnt)
 
         current_bin = self._current_bin
+
         for pl in self._cpfs[current_bin]:
-            log.debug("Entering cpf %s" % pl.name)
+            # log.debug(f"Entering cpf {pl.name}")
             try:
                 found, role = pl.run(self._current_data_key, self._current_key_addr, self._current_par_name,
                                      self._core_taint, current_path, self._f_arg_vals)
 
                 if found:
-                    log.debug("Using cpf %s" % pl.name)
+                    log.debug(f"Using cpf {pl.name} with role {role}")
 
                     self._current_role = role
                     self._cpf_used = pl
                     if pl not in (semantic.Semantic, setter_getter.SetterGetter):
                         self._core_taint.stop_run()
                         break
-            except:
+            except Exception as e:
+                log.warning(f"Exception CPF {pl.name}: {e}")
                 pass
 
-    def _prepare_state(self, key_addr, f_addr):
+    def _apply_taint(self, state, key_addr, keyword=None):
         """
-        Prepare the state to perform the taint analysis to infer the role of a binary
-
-        :param key_addr: address of the data key used to infer the role
-        :param f_addr: function entry point address
-        :return:
+        Apply the taint to the datakey
+        :param state: the current initial state
+        :param key_addr: the address of the datakey
+        :param keyword: the keyword to taint (if we want to constraint the datakey)
+        :return: the new state
         """
-
-        p = self._current_p
-        ct = self._core_taint
-
-        s = p.factory.blank_state(
-            remove_options={
-                simuvex.o.LAZY_SOLVES
-            }
-        )
-
         # taint the data key
         if self._discover_data_keys:
             size = len(self._current_data_key)
         else:
-            size = ct.taint_buf_size
-        t = ct.get_sym_val(name=ct.taint_buf, bits=(size * 8))
+            size = self._core_taint.taint_buf_size
+        t = self._core_taint.get_sym_val(name=self._core_taint.taint_buf, bits=(size * 8)).reversed
+        if keyword:
+            # reverse to make it LE
+            bvv = BVV(keyword).reversed
+            state.add_constraints(t == bvv)
+        # we taint the used keyword to trace its use
+        state.memory.store(key_addr, t)
+        return state
 
-        # we taint the ussed keyword to trace its use
-        s.memory.store(key_addr, t)
-
-        lr = p.arch.register_names[link_regs[p.arch.name]]
-        setattr(s.regs, lr, ct.bogus_return)
-        s.ip = f_addr
-        return s
-
-    def _prepare_function_summaries(self):
-        """
-        Prepare the function summaries to be used during the taint analysis
-
-        :return: the function summaries dictionary
-        """
-
-        p = self._current_p
-
-        mem_cpy_summ = get_memcpy_like(p)
-        size_of_summ = get_sizeof_like(p)
-        heap_alloc_summ = get_heap_alloc(p)
-        memcmp_like_unsized = get_memcmp_like_unsized(p)
-        memcmp_like_sized = get_memcmp_like_sized(p)
-
-        summaries = mem_cpy_summ
-        summaries.update(size_of_summ)
-        summaries.update(heap_alloc_summ)
-        summaries.update(memcmp_like_unsized)
-        summaries.update(memcmp_like_sized)
-
-        return summaries
-
-    def _get_role(self, no, key_addr, reg_name):
+    def _get_role(self, no, key_addr, reg_name, key_name=None):
         """
         Retrieve the role of a binary by inferring whether it is a setter or a getter
 
@@ -512,22 +480,30 @@ class BinaryDependencyGraph:
 
         # prepare the under-contrainted-based initial state
         # we do not allow untaint as we just want to see where the key data key is leading to
-        self._core_taint = coretaint.CoreTaint(p, interfunction_level=2, smart_call=False,
-                                               follow_unsat=True,
-                                               try_thumb=True,
-                                               exit_on_decode_error=True, force_paths=True, allow_untaint=False,
-                                               logger_obj=log)
+        self._core_taint = CoreTaint(p, interfunction_level=2, smart_call=False,
+                                     follow_unsat=True,
+                                     try_thumb=True,
+                                     exit_on_decode_error=True, force_paths=True, allow_untaint=False,
+                                     logger_obj=log)
 
         # the used register is not a parameter register
-        if are_parameters_in_registers(p) and p.arch.registers[reg_name][0] not in ordered_argument_regs[p.arch.name]:
+        if are_parameters_in_registers(p) and reg_name not in arg_reg_names(p):
             return Role.UNKNOWN
 
         self._current_par_name = reg_name
         self._current_key_addr = key_addr
         self._current_f_addr = f_addr
 
-        s = self._prepare_state(key_addr, f_addr)
-        summarized_f = self._prepare_function_summaries()
+        s = get_initial_state(p, self._core_taint, f_addr)
+        s = self._apply_taint(s, key_addr, key_name)
+        # enter into the call
+        sim = p.factory.simgr(s)
+        sim.step()
+        s = sim.active[0]
+        if reg_name:
+            setattr(s.regs, reg_name, BVV(key_addr, p.arch.bits))
+
+        summarized_f = prepare_function_summaries(p)
         self._f_arg_vals = []
         self._set_f_vals = True
 
@@ -538,7 +514,7 @@ class BinaryDependencyGraph:
         except TimeOutException:
             log.warning("Timeout Triggered")
         except Exception as e:
-            log.warning("Exception: %s" % str(e))
+            log.warning(f"Exception in Coretaint: {str(e)}")
 
         self._core_taint.unset_alarm()
         return self._current_role
@@ -546,21 +522,20 @@ class BinaryDependencyGraph:
     def _find_taint_callers(self, current_path, *_, **__):
         """
         Finds tainted callers
-        
-        :param current_path: 
-        :return: None 
+
+        :param current_path:
+        :return: None
         """
-        
+
         active = current_path.active[0]
         p = self._current_p
         if p.factory.block(active.addr).vex.jumpkind == 'Ijk_Call':
-            next_path = current_path.copy(copy_states=True).step()
-            n = len(get_any_arguments_call(p, active.addr))
-            args = ordered_argument_regs[p.arch.name][:n]
-            for a in args:
-                var = getattr(next_path.active[0].regs, p.arch.register_names[a])
+            next_path = current_path.copy(deep=True).step()
+            nargs = get_arity(p, active.addr)
+            for a in range(nargs):
+                var = getattr(next_path.active[0].regs, arg_reg_name(p, a))
                 if self._core_taint.is_or_points_to_tainted_data(var, next_path):
-                    self._tainted_callsites.append((active.addr, p.arch.register_names[a]))
+                    self._tainted_callsites.append((active.addr, arg_reg_name(p, a)))
 
     def _find_tainted_callers(self, key_addr, f_addr):
         """
@@ -576,15 +551,16 @@ class BinaryDependencyGraph:
         self._tainted_callsites = []
         # prepare the under-contrainted-based initial state
         # we do not allow untaint as we just want to see where the data key is leading to
-        self._core_taint = coretaint.CoreTaint(p, interfunction_level=0, smart_call=False,
-                                               follow_unsat=True,
-                                               try_thumb=True,
-                                               exit_on_decode_error=True, force_paths=True, allow_untaint=False,
-                                               logger_obj=log)
+        self._core_taint = CoreTaint(p, interfunction_level=0, smart_call=False,
+                                     follow_unsat=True,
+                                     try_thumb=True,
+                                     exit_on_decode_error=True, force_paths=True, allow_untaint=False,
+                                     logger_obj=log)
 
         self._current_key_addr = key_addr
-        s = self._prepare_state(key_addr, f_addr)
-        summarized_f = self._prepare_function_summaries()
+        s = get_initial_state(p, self._core_taint, f_addr)
+        s = self._apply_taint(s, key_addr)
+        summarized_f = prepare_function_summaries(p)
 
         self._core_taint.set_alarm(TIMEOUT_TAINT, n_tries=TIMEOUT_TRIES)
 
@@ -594,25 +570,25 @@ class BinaryDependencyGraph:
         except TimeOutException:
             log.warning("Timeout Triggered")
         except Exception as e:
-            log.warning("Exception: %s" % str(e))
+            log.warning(f"Exception in Coretaint: {str(e)}")
 
         self._core_taint.unset_alarm()
         callsites = []
         for cs in self._tainted_callsites:
             try:
-                if self._current_cfg.get_any_node(cs[0]).function_address == f_addr and cs not in callsites:
+                if self._current_cfg.model.get_any_node(cs[0]).function_address == f_addr and cs not in callsites:
                     callsites.append(cs)
             except:
                 pass
 
         return callsites
 
-    def _find_key_xref_in_call(self, key_addrs, found=lambda *x: True, only_one=False):
+    def _find_ref_http_strings(self, keyword, found: Callable, only_one=False):
         """
         Collects information about call sites referencing a given set of keys.
 
-        :param key_addrs: searched key addresses
-        :param found: function to all when a key reference is found in a call site
+        :param keyword: the string to search for
+        :param found: function to call when a key reference is found in a call site
         :param only_one: True if exiting after one match, False otherwise
         :return: the information collected at the call site
         """
@@ -621,34 +597,48 @@ class BinaryDependencyGraph:
         p = self._current_p
         info_collected = {}
 
-        # get all the key references we are looking for
-        direct_refs = [s for s in cfg.memory_data.items() if s[0] in key_addrs]
-        indirect_refs = get_indirect_str_refs(p, cfg, key_addrs)
+        found_references = []
 
-        for a, s in direct_refs + indirect_refs:
-            info_collected[s.address] = []
+        key_addrs = get_addrs_string(p, keyword)
+        for func_addr, func in cfg.kb.functions.items():
+            call_sites = func.get_call_sites()
+            for call_site in call_sites:
+                basic_block = p.factory.block(call_site)
+                if basic_block:
+                    for inst_addr, put_statement in get_arguments_call_with_instruction_address(p, basic_block.addr):
+                        # check for possible xrefs
+                        xrefs = cfg.kb.xrefs.get_xrefs_by_ins_addr(inst_addr)
+                        for xref in xrefs:
+                            if xref.dst not in key_addrs:
+                                continue
+                            found_references.append((xref.block_addr, xref.ins_addr, xref.dst))
+                        # or the string might be referenced as a constant
+                        if hasattr(put_statement.data, 'con') and put_statement.data.con.value in key_addrs:
+                            # append the entry
+                            found_references.append((basic_block.addr, inst_addr, put_statement.data.con.value))
 
-            if not BinaryDependencyGraph.is_call(s):
+        for block_addr, inst_addr, key_addr in set(found_references):
+            if key_addr not in info_collected:
+                info_collected[key_addr] = []
+
+            if not BinaryDependencyGraph.is_call(p.factory.block(block_addr)):
                 continue
 
-            for (irsb_addr, stmt_idx, insn_addr) in list(s.refs):
-                if are_parameters_in_registers(p):
-                    reg_used = get_reg_used(self._current_p, self._current_cfg, irsb_addr, stmt_idx, a, key_addrs)
-                    if not reg_used:
-                        continue
-                    ret = found(cfg.get_any_node(irsb_addr), s.address, reg_used)
-
-                    if ret is None:
-                        continue
-                    info_collected[s.address].append(ret)
-                else:
-                    log.error("_find_key_xref_in_call: arch doesn t use registers to set function parameters."
-                              "Implement me!")
+            if are_parameters_in_registers(p):
+                reg_used = get_reg_used(self._current_p, inst_addr)
+                if not reg_used:
                     continue
+                log.info(f"Key {keyword} is used in a function call. Checking now!")
+                ret = found(cfg.model.get_any_node(block_addr), key_addr, reg_used, keyword)
+                if ret:
+                    info_collected[key_addr].append(ret)
+            else:
+                log.error("_find_ref_http_strings: arch doesn t use registers to set "
+                          "function parameters. Implement me!")
+                continue
 
-                if only_one:
-                    break
-
+            if only_one:
+                return info_collected
         return info_collected
 
     def _find_role(self, s=None, things=None):
@@ -656,8 +646,8 @@ class BinaryDependencyGraph:
         Find the role (SETTER vs GETTER) of the current binary
 
         :param s: value of the data key to find within a binary
-        :param s: things to consider data keys (e.g., (global variable, address))
-        
+        :param things: things to consider data keys (e.g., (global variable, address))
+
         :return: list or roles inferred using the input keys
         """
 
@@ -675,12 +665,11 @@ class BinaryDependencyGraph:
             # we got a data key to find
             self._current_data_key = s
             self._discover_data_keys = True
-            key_addrs = get_addrs_string(self._current_p, s)
 
             #
             # Find key references
             #
-            info_collected = self._find_key_xref_in_call(key_addrs, found=self._get_role)
+            info_collected = self._find_ref_http_strings(s, found=self._get_role)
             roles = [x for x in itertools.chain.from_iterable(info_collected.values())]
             cpfs_used = [self._cpf_used]
         else:
@@ -700,7 +689,7 @@ class BinaryDependencyGraph:
                 callers = self._find_tainted_callers(x, self._source_addr)
                 roles = []
                 for cs in callers:
-                    no = self._current_cfg.get_any_node(cs[0])
+                    no = self._current_cfg.model.get_any_node(cs[0])
                     role = self._get_role(no, x, cs[1])
                     cpfs_used.append(self._cpf_used)
                     roles.append(role)
@@ -743,7 +732,8 @@ class BinaryDependencyGraph:
             roles[b] = []
             cpfs_used = []
 
-            strs = [x[0] for x in get_bin_strings(b)]
+            # only check unique strings in a binary (this is the conversion from list -> set -> list
+            strs = list(set([x[0] for x in get_bin_strings(b)]))
             count = window
             if self._keys_to_taint:
                 # we got the key addresses already... use them
@@ -771,13 +761,14 @@ class BinaryDependencyGraph:
                             break
                     for s in strs:
                         if s.startswith(h_key):
-                            log.info("Checking data key: " + s)
+                            log.info(f"Checking data key: {s}")
                             i_roles, cpf_used = self._find_role(s=s)
                             # did we find any role?
                             if any([r for r in i_roles if r != Role.UNKNOWN]):
                                 roles[b] += i_roles
                                 cpfs_used.append(cpf_used)
-                                break
+                                # TODO, should we really stop after one find???
+                                # break
                     count -= 1
             # add a new node
             nodes[b] = BdgNode(self._current_p, self._current_cfg, cpfs_used)
@@ -788,6 +779,7 @@ class BinaryDependencyGraph:
             for new_s in nodes[b].role_data_keys:
                 if new_s and new_s not in self._data_keys:
                     self._data_keys.append(new_s)
+
 
             candidate_new_bins = list(set(nodes[b].discover_new_binaries()))
             new_bins = self._update_projects(candidate_new_bins)
@@ -848,11 +840,11 @@ class BinaryDependencyGraph:
                     nodes[b].set_orphan()
 
             # Clean up
-            for k, childs in self._graph.iteritems():
-                self._graph[k] = list(set(childs))
+            for k, children in self._graph.items():
+                self._graph[k] = list(set(children))
 
         # set leaves
-        for k, c in self._graph.iteritems():
+        for k, c in self._graph.items():
             if not c:
                 k.set_leaf()
 
@@ -862,7 +854,7 @@ class BinaryDependencyGraph:
 
         nodes = self.nodes
         children = [c for x in self._graph.values() for c in x if x]
-        leafs_non_orphan = [n for n in nodes if n.leaf and not n.orphan]
+        leafs_non_orphan = [n for n in nodes if n.leaf and not n.orphan] if nodes else []
         seed_names = [x.split('/')[-1] for x in self._seed_bins]
         spurious_nodes = [n for n in leafs_non_orphan if n not in children and n.bin.split('/')[-1] not in seed_names]
         for to_rem in spurious_nodes:
@@ -873,8 +865,7 @@ class BinaryDependencyGraph:
         """
         Returns the graph's nodes
         """
-
-        return list(set(self._graph.keys() + [x for x in itertools.chain.from_iterable(self._graph.values())]))
+        return list(set(list(self._graph.keys()) + [x for x in itertools.chain.from_iterable(self._graph.values())]))
 
     @property
     def orphans(self):
@@ -886,10 +877,11 @@ class BinaryDependencyGraph:
         Returns the binary dependency graph
         :return:
         """
-
         return self._graph
 
     def analysis_time(self):
+        if not self._end_time or self._start_time:
+            return 0
         return self._end_time - self._start_time
 
     def run(self):
@@ -901,3 +893,22 @@ class BinaryDependencyGraph:
         self._start_time = time.time()
         self._build_dependency_graph()
         self._end_time = time.time()
+
+
+# testing purposes
+# if __name__ == '__main__':
+#     # for now we will use all strings
+#     pf_str = BorderBinariesFinder.get_network_keywords()
+#     config = ...
+#     seed_bins = [
+#         'extracted_binaries/dlink/DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip.extracted/usr/sbin/iptables-multi',
+#         'extracted_binaries/dlink/DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip.extracted/usr/sbin/ip6tables-multi',
+#         'extracted_binaries/dlink/DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip.extracted/usr/sbin/wifidog',
+#         'extracted_binaries/dlink/DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip.extracted/usr/sbin/xmldb',
+#         'extracted_binaries/dlink/DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip.extracted/usr/sbin/rgbin',
+#         'extracted_binaries/dlink/DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip.extracted/sbin/httpd',
+#         'extracted_binaries/dlink/DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip.extracted/htdocs/cgibin']
+#
+#     enabled_cpfs = []
+#     bdg = BinaryDependencyGraph(config, seed_bins, , init_data_keys=pf_str, cpfs=enabled_cpfs)
+#     bdg.run()

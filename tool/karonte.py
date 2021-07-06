@@ -2,12 +2,12 @@ import json
 import sys
 import angr
 import logging
-from bar_logger import bar_logger
-from binary_dependency_graph import BinaryDependencyGraph
+from binary_dependency_graph.binary_dependence_graph import BinaryDependencyGraph
 from binary_dependency_graph.cpfs import environment, semantic, file, socket, setter_getter
-from border_binaries_finder import BorderBinariesFinder
-from bug_finder import BugFinder
-from file_logger import FileLogger
+from border_binaries_finder.border_binary_finder import BorderBinariesFinder
+from bug_finder.bug_finders import BugFinder
+from loggers.file_logger import FileLogger
+from loggers.bar_logger import BarLogger
 from utils import *
 
 angr.loggers.disable_root_logger()
@@ -18,7 +18,7 @@ log = None
 class Karonte:
     def __init__(self, config_path, log_path=None):
         global log
-        log = bar_logger.BarLogger("Karonte", "DEBUG")
+        log = BarLogger("Karonte", "DEBUG")
         
         self._config = json.load(open(config_path))
         self._pickle_parsers = self._config['pickle_parsers']
@@ -50,34 +50,33 @@ class Karonte:
 
         bbf = BorderBinariesFinder(self._fw_path, use_connection_mark=False, logger_obj=log)
 
+        log.info("Retrieving Border Binaries")
         if not self._border_bins:
             self._border_bins = bbf.run(pickle_file=self._pickle_parsers)
             if not self._border_bins:
                 log.error("No border binaries found, exiting...")
-                log.info("Finished, results in %s" % self._klog.name)
+                log.info(f"Finished, results in {self._klog.name}")
                 log.complete()
-                self._klog.save_parser_stats(bbf)
                 self._klog.close_log()
                 return
 
-        if self._add_stats:
-            self._klog.save_parser_stats(bbf)
-
+        log.info("Generating Binary Dependency Graph")
         # starting the analysis with less strings makes the analysis faster
-        pf_str = BorderBinariesFinder.get_network_keywords(end=N_TYPE_DATA_KEYS)
-
+        pf_str = BorderBinariesFinder.get_network_keywords()
         cpfs = [environment.Environment, file.File, socket.Socket, setter_getter.SetterGetter, semantic.Semantic]
-        bdg = BinaryDependencyGraph(self._config, self._border_bins, self._fw_path,
+        bdg = BinaryDependencyGraph(self._config, self._border_bins, self._fw_extracted_path,
                                     init_data_keys=pf_str, cpfs=cpfs, logger_obj=log)
         bdg.run()
-        if self._add_stats:
-            self._klog.save_bdg_stats(bbf, bdg)
 
         bf = BugFinder(self._config, bdg, analyze_parents, analyze_children, logger_obj=log)
         bf.run(report_alert=self._klog.save_alert, report_stats=self._klog.save_stats if self._add_stats else None)
 
+        log.info("Discovering Bugs")
+        bf = BugFinder(self._config, bdg, analyze_parents, analyze_children, logger_obj=log)
+        bf.run(report_alert=self._klog.save_alert, report_stats=self._klog.save_stats if self._add_stats else None)
+
         # Done.
-        log.info("Finished, results in %s" % self._klog.name)
+        log.info(f"Finished, results in {self._klog.name}")
         log.complete()
 
         if self._add_stats:
@@ -87,7 +86,7 @@ class Karonte:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print "Usage " + sys.argv[0] + " config_path"
+        print("Usage " + sys.argv[0] + " config_path")
         sys.exit(0)
 
     config = sys.argv[1]

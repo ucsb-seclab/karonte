@@ -1,10 +1,15 @@
+import os
+
 import claripy
 import logging
-import simuvex
 import random
 import signal
 from random import shuffle
-from utils import *
+
+from angr import BP, SimValueError
+from angr.procedures.stubs.ReturnUnconstrained import ReturnUnconstrained
+
+from taint_analysis.utils import *
 
 logging.basicConfig()
 log = logging.getLogger("CoreTaint")
@@ -25,12 +30,17 @@ class MyFileHandler(object):
     def __getattr__(self, n):
         if hasattr(self._handler, n):
             return getattr(self._handler, n)
-        raise AttributeError, n
+        raise AttributeError(n)
 
 
 class TimeOutException(Exception):
     def __init__(self, message):
         super(TimeOutException, self).__init__(message)
+
+
+class UnSATException(Exception):
+    def __init__(self, message):
+        super(UnSATException, self).__init__(message)
 
 
 class CoreTaint:
@@ -93,6 +103,8 @@ class CoreTaint:
         self._only_tracker = only_tracker
         self._try_to_avoid_z3 = 3
 
+        self.sym_vars = []
+
         if exploration_strategy is not None and (shuffle_sat or reverse_sat):
             log.warning("Exploration strategy takes precedence over state shuffling/reversing")
 
@@ -122,6 +134,8 @@ class CoreTaint:
         self._concretization_strategy = self._default_concretization_strategy if concretization_strategy is None \
             else concretization_strategy
 
+        self._hooked_addrs = []
+
         # stats
         self._new_path = True
         self._n_paths = 0
@@ -142,11 +156,11 @@ class CoreTaint:
         """
         Timeout handler
 
-        :param signum: signal number
+        :param _: signal number
         :param frame:  frame
         :return:
         """
-        log.info("Timeout triggered, %s left...." % str(self._force_exit_after))
+        log.info(f"Timeout triggered, {str(self._force_exit_after)} left....")
 
         self._keep_run = False
         self._timeout_triggered = True
@@ -159,7 +173,7 @@ class CoreTaint:
                 log.info("Hard Timeout triggered, but we are in z3, trying again in 30 seconds")
                 signal.alarm(30)
             else:
-                log.info("Hard Timeout triggered, %s left...." % str(self._force_exit_after))
+                log.info(f"Hard Timeout triggered, {str(self._force_exit_after)} left....")
                 raise TimeOutException("Hard timeout triggered")
 
     def _get_bb(self, addr):
@@ -229,7 +243,50 @@ class CoreTaint:
     def p(self):
         return self._p
 
-    def safe_load(self, path, addr, size=None, unconstrained=False):
+    def estimate_mem_buf_size(self, state, addr, max_size=None):
+        """
+        Estimate the size allocated in a buffer
+        :param state: the current state
+        :param addr: addr of the buffer
+        :param max_size: the maximum size to load
+        :return: the estimated allocated size
+
+        """
+        if not max_size:
+            max_size = self.taint_buf_size
+        try:
+            # estimate the size of the buffer by looking at the buffer contents in memory
+            temp_load = state.memory.load(addr, max_size)
+            if self._taint_buf in str(temp_load.args[0]):
+                # when there is only one thing to load
+                if isinstance(temp_load.args[0], str):
+                    return temp_load.length
+                # tainted
+                size = 0
+                for arg in temp_load.args:
+                    if self._taint_buf in str(arg):
+                        size += arg.length
+                    else:
+                        break
+            else:
+                # not tainted
+                if isinstance(temp_load.args[0], (str, int)):
+                    return temp_load.length
+                size = temp_load.args[0].length
+                if not size:
+                    # TODO solve when there is a conditional in the data
+                    log.error("Should debug. Encountered something in estimate buffer size that should not happen")
+                    size = temp_load.length
+            return size
+        except Exception as e:
+            # The size may be too long and collide with the heap. Try a smaller size. Stop when size smaller than 1
+            # This is a bug in angr that may be fixed at a later time, since there are not enough stack pages allocated
+            new_max_size = int(max_size / 2)
+            if new_max_size > 1:
+                return self.estimate_mem_buf_size(state, addr, new_max_size)
+            return 1
+
+    def safe_load(self, path, addr, size=None, unconstrained=False, estimate_size=False):
         """
         Loads bytes from memory, saving and restoring taint info
 
@@ -239,9 +296,13 @@ class CoreTaint:
         """
 
         self._save_taint_flag()
-        if not size:
-            size = self._p.arch.bits / 8
         state = path.active[0] if not unconstrained else path.unconstrained[0]
+        if not size and not estimate_size:
+            size = self._p.arch.bytes
+        elif not size and estimate_size:
+            size = self.estimate_mem_buf_size(state, addr) / 8
+        # convert to int to prevent errors, since it requires an int not float
+        size = int(size)
         mem_cnt = state.memory.load(addr, size)
         self._restore_taint_flags()
         return mem_cnt
@@ -313,21 +374,20 @@ class CoreTaint:
 
             if state.inspect.address_concretization_action == 'load':
                 # new fresh var
-                name = "cnt_pt_by(" + self._taint_buf + '[' + str(self._deref[0]) + ', ' + \
-                       str(self._deref[1]) + ']' + ")"
-                bits = state.inspect.mem_read_length * 8
-                if type(bits) not in (long, int) and hasattr(bits, 'symbolic'):
-                    bits = state.se.max_int(bits)
+                name = f"cnt_pt_by({self._taint_buf}[{str(self._deref[0])}, {str(self._deref[1])}])"
                 for conc_addr in state.inspect.address_concretization_result:
-                    state_cp = state.copy()
-                    var = self._get_sym_val(name=name, bits=bits)
-                    old_val = state_cp.memory.load(conc_addr)
-                    state.memory.store(conc_addr, var)
+                    old_val = state.memory.load(conc_addr, self._p.arch.bytes)
+                    # we do not apply any extra constraints if there is already taint at this location
+                    if self.is_tainted(old_val):
+                        continue
                     if self._only_tracker:
                         try:
-                            state_cp.se.eval_atleast(old_val, 2)
-                        except:
-                            val = state_cp.se.eval(old_val)
+                            state.solver.eval_atleast(old_val, 2)
+                        except SimValueError:
+                            # todo, find real bitsize
+                            var = self._get_sym_val(name=name, bits=self._p.arch.bits)
+                            state.memory.store(conc_addr, var)
+                            val = state.solver.eval(old_val)
                             state.add_constraints(var == val)
 
     def _default_concretization_strategy(self, state, cnt):
@@ -338,11 +398,11 @@ class CoreTaint:
         :param cnt: variable to concretize
         :return: concretization value for the variable
         """
+        extra_constraints = state.inspect.added_constraints
 
-        extra_constraints = state.inspect.address_concretization_extra_constraints
         if not extra_constraints:
             extra_constraints = tuple()
-        concs = state.se.any_n_int(cnt, 50, extra_constraints=extra_constraints)
+        concs = state.solver.eval_upto(cnt, 50, extra_constraints=extra_constraints)
         return random.choice(concs)
 
     def _get_target_concretization(self, var, state):
@@ -382,27 +442,29 @@ class CoreTaint:
                 idx = splits[-2]
 
                 if not idx.isdigit():
-                    log.error("get_key_cnt: Symbolic ID parsing failed, using the whole id: %s" % ret)
+                    log.error(f"get_key_cnt: Symbolic ID parsing failed, using the whole id: {ret}")
                     return ret
 
                 ret = '_'.join(splits[:-2]) + '_'
                 ret += '_'.join(splits[-1:])
             return ret
 
-        # chek if uncontrained
+        # chek if unconstrained
         state_cp = state.copy()
-        se = state_cp.se
+        se = state_cp.solver
         leafs = [l for l in var.recursive_leaf_asts]
 
         if not leafs:
             conc = self._concretization_strategy(state_cp, var)
 
             if not se.solution(var, conc):
-                conc = se.any_int(var)
+                conc = se.eval(var)
+
             key_cnt = get_key_cnt(var)
             self._concretizations[key_cnt] = conc
             return conc
 
+        # todo why is this constraining a copied state?
         for cnt in leafs:
             key_cnt = get_key_cnt(cnt)
             # concretize all unconstrained children
@@ -410,7 +472,7 @@ class CoreTaint:
                 # first check whether the value is already constrained
                 if key_cnt in self._concretizations.keys():
                     conc = self._concretizations[key_cnt]
-                    if state_cp.se.solution(cnt, conc):
+                    if state_cp.solver.solution(cnt, conc):
                         state_cp.add_constraints(cnt == conc)
                         continue
 
@@ -418,7 +480,7 @@ class CoreTaint:
                 self._concretizations[key_cnt] = conc
                 state_cp.add_constraints(cnt == conc)
 
-        val = state_cp.se.any_int(var)
+        val = state_cp.solver.eval(var)
         return val
 
     def is_tainted(self, var, path=None, state=None, unconstrained=False):
@@ -431,6 +493,7 @@ class CoreTaint:
         :param unconstrained: check unconstrained states
         :return:
         """
+
         def is_untaint_constraint_present(v, un_vars):
             for u in un_vars:
                 # get argument name
@@ -509,10 +572,7 @@ class CoreTaint:
         # and check whether we should untaint some other variables
         state.globals[UNTAINT_DATA][UNTAINTED_VARS] += map(str, leafs)
         deps = dict(state.globals[GLOB_TAINT_DEP_KEY])
-        i = 0
-        while i < len(deps.keys()):
-            master, salve = deps.items()[i]
-
+        for master, slave in deps.items():
             # if not already untainted, let's consider it
             if master not in state.globals[UNTAINT_DATA][SEEN_MASTERS]:
                 untainted_vars = set(state.globals[UNTAINT_DATA][UNTAINTED_VARS])
@@ -524,10 +584,7 @@ class CoreTaint:
                     for entry in deps[master]:
                         self._do_recursive_untaint_core(entry, path)
                     # restart!
-                    i = 0
                     continue
-
-            i += 1
 
     def do_recursive_untaint(self, dst, path):
         """
@@ -552,7 +609,8 @@ class CoreTaint:
         """
 
         self._save_taint_flag()
-        bit_size = bit_size if bit_size else self._taint_buf_size
+        bit_size = bit_size if bit_size else self.estimate_mem_buf_size(self.get_state(current_path), addr)
+        # todo check endianness, since now it is always LE
         t = self._get_sym_val(name=self._taint_buf + '_' + taint_id + '_', bits=bit_size).reversed
         self.get_state(current_path).memory.store(addr, t)
         self._restore_taint_flags()
@@ -614,70 +672,6 @@ class CoreTaint:
                self.is_tainted(self.safe_load(path, x, unconstrained=unconstrained), path=path,
                                unconstrained=unconstrained)
 
-    def _set_fake_ret_succ(self, path, state, addr, ret, *_):
-        """
-        Create a fake ret successors of a given path.
-
-        :param path: current path
-        :param: state: state to set in the new succ
-        :param addr: address where the fake ret block will return
-        :param ret: return of the current function
-        :return: angr path
-        """
-
-        new_s = state.copy()
-        new_s.history.jumpkind = "Ijk_FakeRet"
-
-        # check whether any of the function parameters are tainted
-        nargs = get_arity(self._p, self.get_addr(path))
-        next_cp = path.copy(copy_states=True).step()
-
-        to_taint = False
-        bl = self._p.factory.block(self.get_addr(path))
-        if not len(next_cp.active) and len(next_cp.unconstrained) and bl.vex.jumpkind == 'Ijk_Call':
-            cap = bl.capstone.insns[-1]
-            reg_jump = cap.insn.op_str
-            try:
-                # this can throw exceptions, wtf!
-                val = getattr(next_cp.unconstrained[0].regs, reg_jump)
-                # If the register used for jumping is tainted, we check the function arguments
-                if self.is_or_points_to_tainted_data(val, next_cp, unconstrained=True):
-                    to_taint = True
-            except:
-                pass
-
-        for i in xrange(nargs):
-            name = self._p.arch.register_names[ordered_argument_regs[self._p.arch.name][i]]
-            try:
-                val_arg = getattr(self.get_state(next_cp).regs, name)
-            except:
-                break
-            if self.is_or_points_to_tainted_data(val_arg, next_cp):
-                to_taint = True
-                break
-
-        # return value
-        name = 'reg_ret_'
-        if self._taint_returns_unfollowed_calls and to_taint:
-            name = self._taint_buf + '_' + name
-
-        ret_reg = return_regs[self._p.arch.name]
-        link_reg = link_regs[self._p.arch.name]
-
-        new_s.regs.pc = addr
-        setattr(new_s.regs, self._p.arch.register_names[link_reg], ret)
-        setattr(new_s.regs, self._p.arch.register_names[ret_reg], self._get_sym_val(name=name))
-
-        # function arguments
-        if to_taint and self._taint_arguments_unfollowed_calls:
-            for i in xrange(nargs):
-                name_reg = self._p.arch.register_names[ordered_argument_regs[self._p.arch.name][i]]
-                taint_name = self._taint_buf + '_' + name_reg
-                setattr(new_s.regs, name_reg, self._get_sym_val(name=taint_name))
-
-        return path.copy(
-            stashes={'active': [new_s], 'unsat': [], 'pruned': [], 'unconstrained': [], 'deadended': []})
-
     def _is_summarized(self, prev_path, suc_path, *_):
         """
         Check if function is summarized, and execute it if so.
@@ -693,7 +687,10 @@ class CoreTaint:
         if self._summarized_f:
             for s_addr in self._summarized_f.keys():
                 if addr == s_addr:
-                    self._summarized_f[s_addr](self, prev_path, suc_path)
+                    # execute and store possible new symbolic variables (get_env etc)
+                    possible_sym_var = self._summarized_f[s_addr](self, prev_path, suc_path)
+                    if possible_sym_var:
+                        self.sym_vars.append(possible_sym_var)
                     return True
         return False
 
@@ -722,13 +719,18 @@ class CoreTaint:
             return False
 
         # if the function is summarized by angr, we follow it
-        if self._p._should_use_sim_procedures:
+        if addr in self._summarized_f.keys():
             # consider also next addr in case th current one is a trampoline (eg., plt)
-            trp = suc_path.copy(copy_states=True)
+            trp = suc_path.copy(deep=True)
             trp.step()
             trp_addr = self.get_addr(trp)
             if self._p.is_hooked(addr) or self._p.is_hooked(trp_addr):
                 return True
+            # remove the copied state to prevent state explosion
+            for state in trp.active + trp.unconstrained:
+                state.history.trim()
+                state.downsize()
+                state.release_plugin('solver')
 
         if addr in self._white_calls:
             return True
@@ -771,14 +773,16 @@ class CoreTaint:
         for r in set_regs:
             reg_cnt = getattr(self.get_state(suc_path).regs, r)
             # check if it is pointing to a tainted location
-            tmp_s = self.get_state(suc_path).copy()
+            tmp_s = self.get_state(suc_path)
             try:
-                mem_cnt = tmp_s.memory.load(reg_cnt, 50)  # FIXME set this N to a meaningful value
+                # estimate the size first, so we are not loading to much data. limit it at the taint_buf_size
+                size = min(self.estimate_mem_buf_size(tmp_s, reg_cnt), self.taint_buf_size)
+                mem_cnt = tmp_s.memory.load(reg_cnt, size)
             except TimeOutException as t:
                 raise t
-            except Exception as e:
+            except KeyError as e:
                 # state is unconstrained
-                log.warning("Tried to defererence a non pointer!")
+                log.warning("Tried to dereference a non pointer!")
                 continue
 
             # we might have dereferenced wrongly a tainted variable during the tests before
@@ -810,88 +814,47 @@ class CoreTaint:
             self._back_jumps[bj] += 1
         return True
 
-    def _check_sat_state(self, current_path, current_guards):
+    @staticmethod
+    def _check_sat_state(current_path):
         """
         Check whether the state is SAT
 
         :param current_path: angr current path
-        :param current_guards: current ITE guards
         :return: True is the state is SAT, False otherwise
         """
-
-        # just try to concretize any variable
-        cp_state = current_path.active[0].copy()
-        try:
-            reg_name = self._p.arch.register_names[return_regs[self._p.arch.name]]
-            reg = getattr(cp_state.regs, reg_name)
-            cp_state.se.any_int(reg)
-            self.last_sat = (current_path.copy(copy_states=True), current_guards)
-        except TimeOutException as t:
-            raise t
-        except Exception as e:
-            print str(e)
-            return False
-        return True
-
-    def _vex_messed_up(self, current_path, next_path):
-        """
-        Checks whether the lifter messed up
-
-        :param current_path: angr current path
-        :param next_path: next path
-        :return: True if an error is detected, False otherwise
-        """
-
-        current_path_addr = current_path.active[0].ip.args[0]
-        next_path_addr = next_path.active[0].ip.args[0]
-
-        bl = self._get_bb(current_path_addr)
-        puts = [p for p in bl.vex.statements if p.tag == 'Ist_Put']
-
-        lr = self._p.arch.register_names[link_regs[self._p.arch.name]]
-
-        for p in puts:
-            if self._p.arch.register_names[p.offset] == lr:
-                break
-        else:
-            return False
-
-        if next_path_addr == self._next_inst(bl):
-            log.warning(" VEX fucked up big time!")
-            return True
-        return False
+        return current_path.active[0].solver.satisfiable()
 
     def _drop_constraints(self, path):
         """
         Drop all the constraints within the symbolic engine
-        
-        :param path: angr current path 
+
+        :param path: angr current path
         :return:  None
         """
-        
-        self.get_state(path).release_plugin('solver_engine')
+        self.get_state(path).release_plugin('solver')
         self.get_state(path).downsize()
+        self.get_state(path).history.trim()
 
     # FIXME: change offset according arch.
     def _next_inst(self, bl):
         """
         Get next instruction (sometimes angr messes up)
-        
-        :param bl: basic block 
-        :return: 
+
+        :param bl: basic block
+        :return:
         """
-        
+
         return bl.instruction_addrs[-1] + 4
 
     def _base_exploration_strategy(self, _, next_states):
         """
         Base exploration strategy
-        
-        :param current_path: angr current path 
+
+        :param current_path: angr current path
         :param next_states: next states
-        :return: 
+        :return:
         """
-        
+
         if self._reverse_sat:
             next_states.reverse()
         elif self._shuffle_sat:
@@ -899,10 +862,10 @@ class CoreTaint:
         return next_states
 
     def _flat_explore(self, current_path, check_path_fun, guards_info, current_depth, **kwargs):
-        
+
         """
-        Performs the symbolic-based exploration 
-        
+        Performs the symbolic-based exploration
+
         :param current_path: current path
         :param check_path_fun: function to call for every block in the path
         :param guards_info: current info about the guards in the current path
@@ -916,38 +879,37 @@ class CoreTaint:
 
         current_path_addr = self.get_addr(current_path)
 
-        try:
-            log.debug("%s: Analyzing block %s", self._p.filename.split('/')[-1], hex(current_path_addr))
-        except:
-            return
+        log.debug(f"{os.path.basename(self._p.filename)}: Analyzing block {hex(current_path_addr)}")
 
-        if not self._check_sat_state(current_path, guards_info) and not self._timeout_triggered:
+        if not CoreTaint._check_sat_state(current_path) and not self._timeout_triggered:
             log.error("State got messed up!")
-            raise Exception("State became UNSAT")
+            raise UnSATException("State became UNSAT")
 
         # check whether we reached a sink
+        # todo add back in
         try:
             check_path_fun(current_path, guards_info, current_depth, **kwargs)
         except Exception as e:
             if not self._keep_run:
                 return
-            log.error("'Function check path errored out: %s" % str(e))
+            log.error(f"'Function check path errored out: {str(e)}")
 
         try:
-            succ_path = current_path.copy(copy_states=True).step()
+            succ_path = current_path.copy().step()
         except Exception as e:
-            log.error("ERROR: %s" % str(e))
+            log.error(f"ERROR: {str(e)}")
             return
 
         # try thumb
         if succ_path and succ_path.errored and self._try_thumb and not self._force_paths:
-            succ_path = current_path.copy(copy_states=True).step(thumb=True)
+            succ_path = current_path.copy().step(thumb=True)
 
         if succ_path and succ_path.errored and self._try_thumb and not self._force_paths:
             if self._exit_on_decode_error:
                 self._keep_run = False
             return
 
+        #
         succ_states_unsat = succ_path.unsat if self._follow_unsat else []
         succ_states_sat = succ_path.active
 
@@ -965,16 +927,22 @@ class CoreTaint:
                 # create a fake successors
                 # which should have been created
                 # before.
-                # FIXME: I should use get_below_block
-                # but as of now I don;t want to use CFG
                 if not succ_path.unconstrained:
                     return
-                unc_state = succ_path.unconstrained[0]
-                ret_addr = self._next_inst(bl)
-                link_reg = self._p.arch.register_names[link_regs[self._p.arch.name]]
-                ret_func = getattr(self.get_state(current_path).regs, link_reg)
-                tmp_path = self._set_fake_ret_succ(current_path, unc_state, ret_addr, ret_func)
-                succ_states_sat = [self.get_state(tmp_path)]
+                log.error("Unconstrained call. Fix This. Not ported yet :-(")
+                # raise NotImplementedError("Unconstrained call. Fix This")
+                # FIXME: I should use get_below_block
+                # but as of now I don;t want to use CFG
+                # unc_state = succ_path.unconstrained[0]
+                # ret_addr = self._next_inst(bl)
+                # # only do this when there is a link register in the current arch
+                # if link_regs[self._p.arch.name]:
+                #     link_reg = self._p.arch.register_names[link_regs[self._p.arch.name]]
+                #     ret_func = getattr(self.get_state(current_path).regs, link_reg)
+                #     tmp_path = self._set_fake_ret_succ(current_path, unc_state, ret_addr, ret_func)
+                # else:
+                #     tmp_path = self._set_fake_ret_succ(current_path, unc_state)
+                # succ_states_sat = [self.get_state(tmp_path)]
 
         # register sat and unsat information so that later we can drop the constraints
         for s in succ_states_sat:
@@ -997,105 +965,108 @@ class CoreTaint:
                 log.warning("Got a symbolic IP, perhaps a non-handled switch statement? FIX ME... ")
                 continue
 
-            next_path = succ_path.copy(stashes={'active': [next_state.copy()], 'unsat': [], 'pruned': [],
-                                                'unconstrained': [], 'deadended': []})
-            if not next_state.sat:
-                # unsat successors, drop the constraints
+            # create a new path state with only the next state to continue from
+            next_path = self._p.factory.simgr(next_state.copy(), save_unconstrained=True, save_unsat=True)
+
+            if self._p.is_hooked(next_state.addr) and next_state.addr in self._hooked_addrs:
+                self._p.unhook(next_state.addr)
+                self._hooked_addrs.remove(next_state.addr)
+
+            if not next_state.solver.satisfiable():
+                # unsat successors, drop the constraints and continue with other states
                 self._drop_constraints(next_path)
+                continue
 
             next_depth = current_depth
 
             # First, let's see if we can follow the calls
             try:
-                if self.get_state(next_path).history.jumpkind == 'Ijk_Call' and \
-                        not self._vex_messed_up(current_path, next_path):
+                if self.get_state(next_path).history.jumpkind == 'Ijk_Call':
                     if not self._is_summarized(current_path, next_path, current_depth):
                         if not self._follow_call(current_path, next_path, current_depth):
-                            # if there is not fake ret we create one
-                            if not any(s.history.jumpkind == "Ijk_FakeRet" for s in succ_states):
-                                state = self.get_state(next_path)
-                                link_reg = self._p.arch.register_names[link_regs[self._p.arch.name]]
-                                ret_addr = getattr(state.regs, link_reg)
-                                ret_func = getattr(self.get_state(current_path).regs, link_reg)
-                                next_path = self._set_fake_ret_succ(current_path, state, ret_addr, ret_func)
-                            else:
-                                # the fake ret is already present, therefore we just skip
-                                # the call
-                                continue
+                            # we add a hook with the return unconstrained on the call
+                            self._p.hook(next_state.addr, ReturnUnconstrained())
+                            self._hooked_addrs.append(next_state.addr)
                         else:
-                            log.debug("Following function call to %s" % hex(self.get_addr(next_path)))
+                            log.debug(f"Following function call to {hex(self.get_addr(next_path))}")
                             next_depth = current_depth - 1
+            # todo add back in
             except Exception as e:
-                log.error("ERROR: %s" % str(e))
-                return
+                log.error(f"Following call coretaint: {str(e)}")
+                self._drop_constraints(next_path)
+                continue
 
             try:
                 if self.get_state(next_path).history.jumpkind == 'Ijk_Ret':
                     next_depth = current_depth + 1
             except:
+                self._drop_constraints(next_path)
                 continue
 
             # we have a back jump
             if self.get_state(next_path).history.jumpkind == 'Ijk_Boring' and \
-               self.get_addr(next_path) <= self.get_addr(current_path) and \
-               not self._follow_back_jump(current_path, next_path, guards_info):
+                    self.get_addr(next_path) <= self.get_addr(current_path) and \
+                    not self._follow_back_jump(current_path, next_path, guards_info):
                 log.debug("breaking loop")
                 self._new_path = True
+                self._drop_constraints(next_path)
                 continue
 
             # the successor leads out of the function, we do not want to follow it
             if self.get_addr(next_path) == self._bogus_return:
                 log.debug("hit a return")
                 self._new_path = True
+                self._drop_constraints(next_path)
                 continue
 
             # save the info about the guards of this path
             new_guards_info = list(guards_info)
-            current_guards = [g for g in self.get_state(next_path).guards]
+            current_guards = [g for g in self.get_state(next_path).history.jump_guards]
             if current_guards and len(new_guards_info) < len(current_guards):
                 new_guards_info.append([hex(self.get_addr(current_path)), current_guards[-1]])
 
             # next step!
             self._flat_explore(next_path, check_path_fun, new_guards_info, next_depth, **kwargs)
-            log.debug("Back to block %s", hex(self.get_addr(current_path)))
+            log.debug(f"Back to block {hex(self.get_addr(current_path))}")
             self._new_path = True
 
+        # information about this state is not needed anymore. Drop constraints to free up lots of memory
+        self._drop_constraints(current_path)
         log.debug("Backtracking")
 
     def set_project(self, p):
         """
         Set the project
-        
+
         :param p: angr project
         :return:
         """
-        
+
         self._p = p
 
     def stop_run(self):
         """
         Stop the taint analysis
-        
+
         :return: None
         """
-        
+
         self._keep_run = False
 
     def flat_explore(self, state, check_path_fun, guards_info, force_thumb=False, **kwargs):
         """
         Run a symbolic-based exploration
-        
-        :param state: state 
-        :param check_path_fun: function to call for each visited basic block 
+
+        :param state: state
+        :param check_path_fun: function to call for each visited basic block
         :param guards_info: guards ITE info
         :param force_thumb: start with thumb mode ON
         :param kwargs: kwargs
-        :return: None 
+        :return: None
         """
-        
+
         self._keep_run = True
-        initial_path = self._p.factory.path(state)
-        initial_path = self._p.factory.simgr(initial_path, save_unconstrained=True, save_unsat=True)
+        initial_path = self._p.factory.simgr(state, save_unconstrained=True, save_unsat=True)
         current_depth = self._interfunction_level
 
         if force_thumb:
@@ -1103,51 +1074,14 @@ class CoreTaint:
             initial_path = initial_path.step(thumb=True)[0]
         self._flat_explore(initial_path, check_path_fun, guards_info, current_depth, **kwargs)
 
-    def start_logging(self):
-        """
-        Start logging
-        
-        :return: None 
-        """
-        
-        if not self._default_log:
-            return
-
-        self._fp.write("Log Start \n"
-                       "Binary: " +
-                       self._p.filename + '\n'
-                       "=================================\n\n")
-
-    def log(self, msg):
-        """
-        Log a message
-        
-        :param msg: message 
-        :return: 
-        """
-        
-        self._fp.write(msg)
-
-    def stop_logging(self):
-        """
-        Stop the logging
-        
-        :return: None 
-        """
-        
-        if self._default_log:
-            log.info("Done.")
-            log.info("Results in " + self._fp.name)
-        self._fp.close()
-
     def _init_bss(self, state):
         """
         Initialize the bss section with symboli data (might be slow!).
         :param state: angr state
-        :return: 
+        :return:
         """
-        
-        bss = [s for s in self._p.loader.main_bin.sections if s.name == '.bss']
+
+        bss = [s for s in self._p.loader.main_object.sections if s.name == '.bss']
         if not bss:
             return
 
@@ -1162,18 +1096,18 @@ class CoreTaint:
     def set_alarm(self, timer, n_tries=0):
         """
         Set the alarm to interrupt the analysis
-        
+
         :param timer: timer
         :param n_tries: number of tries to stop the analysis gracefully
         :return: Non
         """
-        
+
         if self._old_signal_handler is None:
             handler = signal.getsignal(signal.SIGALRM)
             assert handler != signal.SIG_IGN, "The coretaint alarm handler should never be SIG_IGN"
             self._old_signal_handler = handler
 
-        # TODO save the time left by the previous analaysis
+        # TODO save the time left by the previous analysis
         # and restore it
         signal.signal(signal.SIGALRM, self.handler)
         self._old_timer = signal.alarm(timer)
@@ -1187,10 +1121,10 @@ class CoreTaint:
     def restore_signal_handler(self):
         """
         Restore the signal handler
-        
+
         :return: None
         """
-        
+
         if self._old_signal_handler is not None:
             signal.signal(signal.SIGALRM, self._old_signal_handler)
         if self._old_timer != 0:
@@ -1203,7 +1137,7 @@ class CoreTaint:
 
         """
         Run the static taint engine
-        
+
         :param state: initial state
         :param sinks_info: sinks info
         :param sources_info: sources info
@@ -1211,7 +1145,7 @@ class CoreTaint:
         :param init_bss: initializ bss flag
         :param check_func: function to execute for each explored basic block
         :param force_thumb: start analysis in thumb mode
-        :param use_smart_concretization: use smart concretization attempts to decrease imprecision due to spurious 
+        :param use_smart_concretization: use smart concretization attempts to decrease imprecision due to spurious
                                          pointer aliasing.
         :return: None
         """
@@ -1223,10 +1157,9 @@ class CoreTaint:
             summarized_f = {}
 
         self._use_smart_concretization = use_smart_concretization
-        state.inspect.b(
+        state.inspect.add_breakpoint(
             'address_concretization',
-            simuvex.BP_AFTER,
-            action=self.addr_concrete_after
+            BP(when=angr.BP_AFTER, action=self.addr_concrete_after)
         )
 
         state.globals[GLOB_TAINT_DEP_KEY] = {}
@@ -1255,11 +1188,10 @@ class CoreTaint:
             log.info("init .bss")
             self._init_bss(state)
         try:
-            self.flat_explore(state,  check_func, [], force_thumb=force_thumb, sinks_info=sinks_info,
+            self.flat_explore(state, check_func, [], force_thumb=force_thumb, sinks_info=sinks_info,
                               sources_info=sources_info)
         except TimeOutException:
             log.warning("Hard timeout triggered")
 
         if self._timeout_triggered:
-            self.log("\nTimed out...\n")
             log.debug("Timeout triggered")

@@ -27,15 +27,15 @@ class BarLogger:
     """
         Karonte Bar Logger
     """
-    
+
     def __init__(self, name_logger, level_logger):
         """
         Initialization method
-        
-        :param name_logger: name of the logger 
+
+        :param name_logger: name of the logger
         :param level_logger: level of the logger (DEBUG, INFO, WARNING, ERROR)
         """
-        
+
         self._log_level = LogLevel(level_logger)
         self._tot_elaborations = 1
         self._completed_elaborations = 0
@@ -46,11 +46,11 @@ class BarLogger:
     def set_etc(self, sec_etc):
         """
         Set the estimated time to completion in seconds
-        
+
         :param sec_etc: time to completion
-        :return: None 
+        :return: None
         """
-        
+
         self._ETC = datetime.fromtimestamp(sec_etc).strftime("%I:%M:%S")
 
     def set_tot_elaborations(self, tot_elaborations):
@@ -71,6 +71,7 @@ class BarLogger:
         ]
         self._bar = progressbar.ProgressBar(redirect_stderr=True, max_value=tot_elaborations, widgets=widgets)
         self._bar.start()
+        self.reset_completed_elaborations()
         self._tot_elaborations = tot_elaborations
 
     def new_elaboration(self):
@@ -91,6 +92,17 @@ class BarLogger:
         """
 
         self._completed_elaborations += n
+        self._update_bar()
+
+    def reset_completed_elaborations(self):
+        """
+        Set completed elaborations
+
+        :param n: number of elaborations completed
+        :return: None
+        """
+
+        self._completed_elaborations = 0
         self._update_bar()
 
     def _print_it(self, type_m, color, msg, *kargs):
@@ -189,7 +201,7 @@ class BarLogger:
         """
 
         try:
-            if self._log_level in (LogLevel.DEBUG, ):
+            if self._log_level in (LogLevel.DEBUG,):
                 self._print_it(LogLevel.DEBUG, BColors.DEBUG, msg, *kargs)
             self._update_bar()
         except:
@@ -202,7 +214,7 @@ class BarLogger:
         """
 
         try:
-            print self._completed_elaborations
+            print(self._completed_elaborations)
             self._completed_elaborations = self._tot_elaborations
             self._update_bar()
             if self._bar:

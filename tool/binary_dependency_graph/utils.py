@@ -1,24 +1,20 @@
-import sys
-import os
-import subprocess
 import string
-import archinfo
-import binascii
-import pyvex
+import subprocess
 import subprocess as sp
-import networkx
-import struct
 
-from os.path import dirname, abspath
-sys.path.append(os.path.abspath(os.path.join(dirname(abspath(__file__)), '../../../tool')))
-from taint_analysis import coretaint, summary_functions
-from taint_analysis.utils import get_ord_arguments_call, get_any_arguments_call, ordered_argument_regs
+import networkx
+
+from archinfo import Endness
+
+from taint_analysis import summary_functions
+from taint_analysis.utils import get_ord_arguments_call, get_any_arguments_call, get_arity
 
 # Strings stuff
 MIN_STR_LEN = 3
 STR_LEN = 255
 ALLOWED_CHARS = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-/_'
-EXTENDED_ALLOWED_CHARS = ALLOWED_CHARS + "%,.;+=_)(*&^%$#@!~`|<>{}[]"
+EXTENDED_CHARS = "%,.;+=)(*&^%$#@!~`|<>{}[]"
+EXTENDED_ALLOWED_CHARS = ALLOWED_CHARS + EXTENDED_CHARS
 SEPARATOR_CHARS = ('-', '_')
 
 # taint stuff
@@ -26,12 +22,6 @@ TIMEOUT_TAINT = 60 * 5
 TIMEOUT_TRIES = 2
 ROLE_DATAKEYS_RATIO = 0.5
 DEF_ROLE_ARITY = 2
-
-link_regs = {
-    'ARMEL': archinfo.ArchARMEL.registers['lr'][0],
-    'AARCH64': archinfo.ArchAArch64.registers['x30'][0],
-    'MIPS32': archinfo.ArchMIPS32.registers['ra'][0]
-}
 
 
 def is_pem_key(file_path):
@@ -44,7 +34,7 @@ def is_pem_key(file_path):
 
     p = sp.Popen('file ' + file_path, stdout=sp.PIPE, stderr=sp.PIPE, stdin=sp.PIPE, shell=True)
     o, e = p.communicate()
-    if o and 'private key' in o:
+    if o and b'private key' in o:
         return True
     return False
 
@@ -52,7 +42,6 @@ def is_pem_key(file_path):
 def get_string(p, mem_addr, extended=False):
     """
     Get a string from a memory address
-
     :param p: angr project
     :param mem_addr: memory address
     :param extended: use extended set of characters
@@ -68,33 +57,36 @@ def get_string(p, mem_addr, extended=False):
 
     # check if the address contain another address
     try:
-        endianess = '<I' if 'LE' in p.arch.memory_endness else '>I'
-        tmp_addr = struct.unpack(
-            endianess, ''.join(p.loader.memory.read_bytes(mem_addr, p.arch.bytes))
-        )[0]
+        endianness = 'little' if p.arch.memory_endness == Endness.LE else 'big'
+        tmp_addr = int.from_bytes(p.loader.memory.load(mem_addr, p.arch.bytes), endianness)
     except:
         tmp_addr = None
 
     # if the .text exists, we make sure that the actual string
     # is someplace else.
-    if text_bounds is not None and text_bounds[0] <= mem_addr <= text_bounds[1]:
-        # if the indirect address is not an address, or it points to the text segment,
-        # or outside the scope of the binary
-        if not tmp_addr or text_bounds[0] <= tmp_addr <= text_bounds[1] or \
-               tmp_addr < bin_bounds[0] or tmp_addr > bin_bounds[1]:
-            return ''
-
-    # get string representation at mem_addr
-    cnt = p.loader.memory.read_bytes(mem_addr, STR_LEN)
-    string_1 = get_mem_string(cnt, extended=extended)
-    string_2 = ''
-
     try:
+        if text_bounds is not None and text_bounds[0] <= mem_addr <= text_bounds[1]:
+            # if the indirect address is not an address, or it points to the text segment,
+            # or outside the scope of the binary
+            if not tmp_addr or text_bounds[0] <= tmp_addr <= text_bounds[1] or \
+                   tmp_addr < bin_bounds[0] or tmp_addr > bin_bounds[1]:
+                return ''
+    except:
+        print("This is where it failed")
+        return ''
+
+    string_1 = ''
+    string_2 = ''
+    try:
+        # get string representation at mem_addr
+        cnt = p.loader.memory.load(mem_addr, STR_LEN)
+        string_1 = get_mem_string(cnt, extended=extended)
+
         if tmp_addr and bin_bounds[0] <= tmp_addr <= bin_bounds[1]:
             cnt = p.loader.memory.read_bytes(tmp_addr, STR_LEN)
             string_2 = get_mem_string(cnt)
     except:
-        string_2 = ''
+        pass
 
     # return the most probable string
     candidate = string_1 if len(string_1) > len(string_2) else string_2
@@ -114,9 +106,10 @@ def get_mem_string(mem_bytes, extended=False):
     chars = EXTENDED_ALLOWED_CHARS if extended else ALLOWED_CHARS
 
     for c in mem_bytes:
-        if c not in chars:
+        c_ascii = chr(c)
+        if c_ascii not in chars:
             break
-        tmp += c
+        tmp += c_ascii
 
     return tmp
 
@@ -159,9 +152,7 @@ def get_addrs_string(p, s):
     b = p.loader.main_object.binary
     str_info = get_bin_strings(b)
     offs = [x[1] for x in str_info if s == x[0]]
-    refs = [p.loader.main_object.min_addr + off for off in offs]
-    return refs
-
+    return [p.loader.main_object.min_addr + off for off in offs]
 
 def get_addrs_similar_string(p, s):
     """
@@ -178,11 +169,11 @@ def get_addrs_similar_string(p, s):
     info = []
     for t in tmp:
         sub_str = t[0].replace(s, '')
-        non_aplha_num = list(set([x for x in sub_str if not x.isalnum()]))
-        if len(non_aplha_num) == 0 or (len(non_aplha_num) == 1 and non_aplha_num[0] in ('_', '-')):
+        non_alpha_num = list(set([x for x in sub_str if not x.isalnum()]))
+        if len(non_alpha_num) == 0 or (len(non_alpha_num) == 1 and non_alpha_num[0] in ('_', '-')):
             info.append(t)
 
-    return [(s, p.loader.main_object.min_addr + off) for s, off in info]
+    return [p.loader.main_object.min_addr + off for s, off in info]
 
 
 def get_bin_strings(filename):
@@ -200,9 +191,10 @@ def get_bin_strings(filename):
         t_str = ""
 
         for c in f.read():
-            if c in string.printable and c != '\n':
+            char = chr(c)
+            if char in string.printable and char != '\n':
                 last_off = off if not last_off else last_off
-                t_str += c
+                t_str += char
             else:
                 if t_str and len(t_str) > 1:
                     results.append((t_str, last_off))
@@ -279,7 +271,6 @@ def get_memcmp_like_unsized(p):
     :param p: angr project
     :return: function summaries
     """
-
     addrs = get_dyn_sym_addrs(p, ['strcmp', 'strcasecmp'])
     summarized_f = {}
     for f in addrs:
@@ -295,8 +286,7 @@ def get_memcmp_like_sized(p):
     :param p: angr project
     :return: function summaries
     """
-
-    addrs = get_dyn_sym_addrs(p, ['strncasecmp', 'strncmp'])
+    addrs = get_dyn_sym_addrs(p, ['strncasecmp', 'strncmp', 'memcmp'])
     summarized_f = {}
     for f in addrs:
         summarized_f[f] = summary_functions.memcmp_sized
@@ -353,59 +343,6 @@ def get_env(p):
     return summarized_f
 
 
-def get_indirect_str_refs(p, cfg, str_addrs):
-    """
-    Gets indirect string references
-
-    :param p: angr project
-    :param cfg: angr cfg
-    :param str_addrs: string addresses
-    :return: reference objects
-    """
-
-    # some binary use the GOT to ref strings
-    try:
-        new_str_addrs = str_addrs + [(r - p.loader.main_object.sections_map['.got'].min_addr) & (2 ** p.arch.bits - 1)
-                                     for r in str_addrs]
-    except:
-        new_str_addrs = str_addrs
-
-    ret = []
-    code_refs = [s for s in cfg.memory_data.items()]
-    for a, ref in code_refs:
-        addr = ref.address
-        cnt = p.loader.memory.read_bytes(addr, p.arch.bytes)
-        if 'LE' in p.arch.memory_endness:
-            cnt = reversed(cnt)
-
-        try:
-            cnt = binascii.hexlify(bytearray(cnt))
-            if int(cnt, 16) in new_str_addrs:
-                ret += [s for s in cfg.memory_data.items() if s[0] == addr]
-        except:
-            pass
-
-    # pointers
-    refs = [s for s in cfg.memory_data.items() if s[0] in new_str_addrs]
-    for ref in refs:
-        cnt = ref[1]
-        if hasattr(cnt, 'pointer_addr'):
-            pt = cnt.pointer_addr
-            ret += [s for s in cfg.memory_data.items() if s[0] == pt]
-
-    refs = [s for s in cfg.memory_data.items() if s[0] in new_str_addrs]
-    for ref in refs:
-        cnt = ref[1]
-        if hasattr(cnt, 'pointer_addr'):
-            pt = cnt.pointer_addr
-            # we collect both references
-            ret += [(s.address, s) for k, s in cfg.insn_addr_to_memory_data.items() if s.address == pt]
-            ret += [(ind_addr, s) for k, s in cfg.insn_addr_to_memory_data.items() if s.address == pt for ind_addr
-                    in new_str_addrs]
-
-    return ret
-
-
 def are_parameters_in_registers(p):
     """
     Checks whether function arguments are passed through registers
@@ -417,92 +354,27 @@ def are_parameters_in_registers(p):
     return hasattr(p.arch, 'argument_registers')
 
 
-def get_args_call(p, no):
-    """
-    Gets the arguments of function call
-
-    :param p: angr project
-    :param no: CFG Accurate node of the call site
-    :return: the values of function called in node no
-    """
-
-    ins_args = get_ord_arguments_call(p, no.addr)
-    if not ins_args:
-        ins_args = get_any_arguments_call(p, no.addr)
-
-    vals = {}
-
-    for state in no.final_states:
-        vals[state] = []
-        for ins_arg in ins_args:
-            # get the values of the arguments
-            if hasattr(ins_arg.data, 'tmp') and ins_arg.data.tmp in state.scratch.temps:
-                val = state.scratch.temps[ins_arg.data.tmp]
-                val = val.args[0] if type(val.args[0]) in (int, long) else None
-                if val:
-                    vals[state].append((ins_arg.offset, val))
-            elif type(ins_arg.data) == pyvex.expr.Const and len(ins_arg.data.constants) == 1:
-                    vals[state].append((ins_arg.offset, ins_arg.data.constants[0].value))
-            else:
-                print("Cant' get the value for function call")
-    return vals
-
-
-def get_reg_used(p, cfg, addr, idx, s_addr, all_str_addrs):
+def get_reg_used(p, inst_addr):
     """
     Finds whether and which register is used to store a string address.
-
     :param p: angr project
-    :param cfg: angr cfg
-    :param addr: basic block address
-    :param idx: statement idx of the statement referencing a string
-    :param s_addr: address of string referenced in the statement pointed by idx
-    :param all_str_addrs: all string addresses
-    :return: the register name the string is assigned to
+    :param inst_addr: the address of this instruction
+    :return: the register name the string is assigned to or None if no register found
     """
-
     if not are_parameters_in_registers(p):
         raise Exception("Parameters are not in registers")
 
-    block = p.factory.block(addr)
-    stmt = block.vex.statements[idx]
-    no = cfg.get_any_node(addr)
+    block = p.factory.block(inst_addr)
 
-    # sometimes strings are reference indirectly through an address contained in the
-    # text section
-    endianess = '<I' if 'LE' in p.arch.memory_endness else '>I'
-    s_addr_2 = None
-    try:
-        s_addr_2 = struct.unpack(endianess, ''.join(p.loader.memory.read_bytes(s_addr, p.arch.bytes)))[0]
-    except:
-        pass
-
-    if hasattr(stmt, 'offset'):
-        return p.arch.register_names[stmt.offset]
-
-    # damn! The string is not assigned directly to a register, but to a tmp.
-    # It means we have to find out what register is used to pass the string
-    # to the function call
-    # save the function manager, CFGAccurate will change it
-    fm = p.kb.functions
-
-    cfga = p.analyses.CFGAccurate(starts=(no.function_address,), keep_state=True, call_depth=0)
-    no = cfga.get_any_node(addr)
-    if not no:
-        cfga = p.analyses.CFGAccurate(starts=(addr,), keep_state=True, call_depth=0)
-        no = cfga.get_any_node(addr)
-        if not no:
+    # find the first put statement in a instruction. Stop at a mark (this is the next instruction)
+    for i in range(1, len(block.vex.statements)):
+        stmt_next = block.vex.statements[i]
+        if hasattr(stmt_next, 'offset'):
+            return p.arch.register_names[stmt_next.offset]
+        elif stmt_next.tag == "Ist_IMark":
             return None
 
-    args = get_args_call(p, no)
-
-    # restore the old function manager
-    p.kb.functions = fm
-
-    for _, vals in args.iteritems():
-        for o, v in vals:
-            if v in ((s_addr, s_addr_2) + tuple(all_str_addrs)):
-                return p.arch.register_names[o]
+    # it could not recover which register is used
     return None
 
 
@@ -520,17 +392,17 @@ def find_memcmp_like(p, cfg):
         css = []
 
         try:
-            no = cfg.get_any_node(fun.addr)
+            no = cfg.model.get_any_node(fun.addr)
             css = [pred for pred in no.predecessors]
         except:
             pass
 
-        if css == []:
+        if not css:
             continue
 
         cs = css[0]
-        args = get_ord_arguments_call(p, cs.addr)
-        if len(args) > 3 or len(args) < 2:
+        nargs = get_arity(p, cs.addr)
+        if nargs > 3 or nargs < 2:
             continue
 
         for loop in [x for x in networkx.simple_cycles(fun.graph)]:
@@ -567,7 +439,7 @@ def find_memcpy_like(p, cfg=None):
         css = []
 
         try:
-            no = cfg.get_any_node(fun.addr)
+            no = cfg.model.get_any_node(fun.addr)
             css = [pred for pred in no.predecessors]
         except:
             pass
@@ -576,8 +448,8 @@ def find_memcpy_like(p, cfg=None):
             continue
 
         cs = css[0]
-        args = get_ord_arguments_call(p, cs.addr)
-        if len(args) > 3 or len(args) < 2:
+        nargs = get_arity(p, cs.addr)
+        if nargs > 3 or nargs < 2:
             continue
 
         for loop in [x for x in networkx.simple_cycles(fun.graph)]:
@@ -609,3 +481,26 @@ def get_atoi(p):
     for f in addrs:
         summarized_f[f] = summary_functions.atoi
     return summarized_f
+
+
+def prepare_function_summaries(p):
+    """
+    Set and returns a dictionary of function summaries
+    :return: function summaries
+    """
+    mem_cpy_summ = get_memcpy_like(p)
+    size_of_summ = get_sizeof_like(p)
+    heap_alloc_summ = get_heap_alloc(p)
+    env_summ = get_env(p)
+    memcmp_like_unsized = get_memcmp_like_unsized(p)
+    memcmp_like_sized = get_memcmp_like_sized(p)
+    atoi_like = get_atoi(p)
+
+    summaries = mem_cpy_summ
+    summaries.update(size_of_summ)
+    summaries.update(heap_alloc_summ)
+    summaries.update(env_summ)
+    summaries.update(memcmp_like_unsized)
+    summaries.update(memcmp_like_sized)
+    summaries.update(atoi_like)
+    return summaries

@@ -4,6 +4,7 @@ import sympy
 mpmath.mp.pretty = True
 ROUND = 5
 
+
 def get_generating_function(f, T=None):
     """
     Get the generating function
@@ -70,9 +71,10 @@ def get_path_n(f, T=None):
     e_upper_n = 0
     coeff = []
 
-    for i in xrange(1, D + 1):
+    for i in range(1, D + 1):
+        # TODO fix. This does not work
         ri, mi = rs.items()[i - 1]
-        for j in xrange(mi):
+        for j in range(mi):
             c_ij = sympy.var('c_' + str(i) + str(j))
             coeff.append(c_ij)
             e_path_n += c_ij * (n ** j) * ((1 / ri) ** n)

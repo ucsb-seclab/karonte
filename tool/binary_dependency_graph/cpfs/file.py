@@ -1,10 +1,10 @@
-from __init__ import CPF, LIB_KEYWORD
-from taint_analysis.utils import ordered_argument_regs
-from binary_dependency_graph.utils import link_regs, get_string, are_parameters_in_registers, run_command
+import os
+
+from binary_dependency_graph.cpfs.__init__ import CPF, LIB_KEYWORD
+from taint_analysis.utils import arg_reg_name, arg_reg_id, get_initial_state
+from binary_dependency_graph.utils import get_string, are_parameters_in_registers, run_command
 from binary_dependency_graph.bdp_enum import Role, RoleInfo
-from taint_analysis import coretaint, summary_functions
-from taint_analysis.coretaint import TimeOutException
-import simuvex
+from taint_analysis.coretaint import TimeOutException, CoreTaint
 
 TIMEOUT_TAINT = 10
 TIMEOUT_TRIES = 1
@@ -53,26 +53,6 @@ class File(CPF):
         self._check_func = None
         self._last_file_name = None
 
-    def _get_initial_state(self, addr):
-        """
-        Sets and returns the initial state of the analysis
-
-        :param addr: entry point
-        :return: the state
-        """
-
-        p = self._p
-        s = p.factory.blank_state(
-            remove_options={
-                simuvex.o.LAZY_SOLVES
-            }
-        )
-
-        lr = p.arch.register_names[link_regs[self._p.arch.name]]
-        setattr(s.regs, lr, self._ct.bogus_return)
-        s.ip = addr
-        return s
-
     def _check_getter_sink(self, current_path, *_, **__):
         """
         The sink here is a memcmp-like function, if both parameters are tainted,
@@ -83,11 +63,9 @@ class File(CPF):
         """
 
         if current_path.active[0].addr == self._sink_addr:
-            next_path = current_path.copy(copy_states=True).step()
-            name_reg = self._p.arch.register_names[ordered_argument_regs[self._p.arch.name][0]]
-            val_1 = getattr(next_path.active[0].regs, name_reg)
-            name_reg = self._p.arch.register_names[ordered_argument_regs[self._p.arch.name][1]]
-            val_2 = getattr(next_path.active[0].regs, name_reg)
+            next_path = current_path.copy(deep=True).step()
+            val_1 = getattr(next_path.active[0].regs, arg_reg_name(self._p, 0))
+            val_2 = getattr(next_path.active[0].regs, arg_reg_name(self._p, 1))
 
             if self._ct.is_tainted(val_1) and self._ct.is_tainted(val_2):
                 self._read_from_file = True
@@ -104,9 +82,8 @@ class File(CPF):
         """
 
         if current_path.active[0].addr == self._sink_addr:
-            next_path = current_path.copy(copy_states=True).step()
-            name_reg = self._p.arch.register_names[ordered_argument_regs[self._p.arch.name][0]]
-            val_1 = getattr(next_path.active[0].regs, name_reg)
+            next_path = current_path.copy(deep=True).step()
+            val_1 = getattr(next_path.active[0].regs, arg_reg_name(self._p, 0))
 
             if self._ct.is_tainted(val_1):
                 self._write_from_file = True
@@ -124,9 +101,8 @@ class File(CPF):
 
         if not self._ct.taint_applied:
             # first get the address of the filename
-            next_path = current_path.copy(copy_states=True).step()
-            name_reg = self._p.arch.register_names[ordered_argument_regs[self._p.arch.name][0]]
-            addr = getattr(next_path.active[0].regs, name_reg)
+            next_path = current_path.copy(deep=True).step()
+            addr = getattr(next_path.active[0].regs, arg_reg_name(self._p, 0))
             if addr.concrete:
                 self._last_file_name = get_string(self._p, addr.args[0], extended=True)
 
@@ -148,63 +124,28 @@ class File(CPF):
         self._check_func = check_func
         caller_blocks = self._get_caller_blocks(current_path, 'fopen')
         for caller_block in caller_blocks:
-            self._ct = coretaint.CoreTaint(p, not_follow_any_calls=True, smart_call=False,
-                                           follow_unsat=True,
-                                           try_thumb=True,
-                                           exit_on_decode_error=True, force_paths=True,
-                                           taint_returns_unfollowed_calls=True,
-                                           taint_arguments_unfollowed_calls=True,
-                                           allow_untaint=False)
+            self._ct = CoreTaint(p, not_follow_any_calls=True, smart_call=False,
+                                 follow_unsat=True,
+                                 try_thumb=True,
+                                 exit_on_decode_error=True, force_paths=True,
+                                 taint_returns_unfollowed_calls=True,
+                                 taint_arguments_unfollowed_calls=True,
+                                 allow_untaint=False)
 
             self._ct.set_alarm(TIMEOUT_TAINT, n_tries=TIMEOUT_TRIES)
             try:
-                s = self._get_initial_state(caller_block)
+                s = get_initial_state(self._p, self._ct, caller_block)
                 self._ct.run(s, (), (), force_thumb=False,
                              check_func=self._save_file_name)
             except TimeOutException:
                 self._log.warning("Hard timeout triggered")
             except Exception as e:
-                self._log.error("file.py: Something went terribly wrong: %s" % str(e))
+                self._log.error(f"file.py: Something went terribly wrong: {str(e)}")
             self._ct.restore_signal_handler()
-
-    def _get_caller_blocks(self, current_path, call_name):
-        """
-        Get caller blocks.
-
-        :param current_path: angr current path
-        :param call_name: call function name
-        :return: the caller blocks
-        """
-
-        cfg = self._cfg
-        p = self._p
-
-        no = cfg.get_any_node(current_path.active[0].addr)
-        fun = cfg.functions[no.function_address]
-        blocks = []
-        for addr in fun.block_addrs:
-            try:
-                bb = p.factory.block(addr).vex
-                if bb.jumpkind != 'Ijk_Call':
-                    continue
-                t_no = cfg.get_any_node(bb.addr)
-                succ = t_no.successors[0]
-                if not succ.name:
-                    succ = t_no.successors[0]
-
-                if succ.name and call_name in succ.name:
-                    blocks.append(bb.addr)
-            except TimeOutException:
-                raise
-            except Exception as e:
-                self._log.error("_get_caller_blocks file.py: Something went terribly wrong: %s" % str(e))
-
-        return blocks
 
     def run(self, data_key, key_addr, reg_name, core_taint, current_path, *kargs, **kwargs):
         """
         Run this CPF
-
         :param data_key: data key
         :param key_addr: data key address
         :param reg_name: register name where the address is stored
@@ -214,21 +155,19 @@ class File(CPF):
         :param kwargs: kwargs
         :return: None
         """
-
         p = self._p
         cfg = self._cfg
         self._current_key_addr = key_addr
         path_copy = current_path
         addr = current_path.active[0]
 
-        next_path = current_path.copy(copy_states=True).step()
+        next_path = current_path.copy(deep=True).step()
         # we jump into the GoT if we have an extern call
-        if next_path.active[0].addr in self._p.loader.main_bin.reverse_plt.keys():
-            path_copy = next_path.copy(copy_states=True).step()
+        if next_path.active and self._p.loader.find_plt_stub_name(next_path.active[0].addr):
+            path_copy = next_path.copy(deep=True).step()
             addr = path_copy.active[0].addr
 
         node = cfg.get_any_node(addr)
-        par_n = ordered_argument_regs[p.arch.name].index(p.arch.registers[reg_name][0])
 
         if not are_parameters_in_registers(p):
             raise Exception("file.run: Implement me")
@@ -242,12 +181,10 @@ class File(CPF):
 
             if str(node.name).lower() in M_SET_KEYWORD:
                 # check whether if the data_key is passed.
-                reg_off = ordered_argument_regs[p.arch.name][1]
-                reg_name = p.arch.register_names[reg_off]
+                reg_name = arg_reg_name(p, 1)
                 reg_cnt = getattr(path_copy.active[0].regs, reg_name)
-                tainted = core_taint.is_tainted(reg_cnt)
-                if not tainted:
-                    tainted = core_taint.is_tainted(core_taint.safe_load(path_copy, reg_cnt), path=path_copy)
+                reg_cnt_loaded = core_taint.safe_load(path_copy, reg_cnt)
+                tainted = core_taint.is_tainted(reg_cnt) or core_taint.is_tainted(reg_cnt_loaded, path=path_copy)
 
                 if tainted:
                     candidate_role = Role.SETTER
@@ -261,24 +198,18 @@ class File(CPF):
             # getter are more complicated. We have to understand whether the data_key is compared against
             # some content taken from a file
             if str(node.name).lower() in CMP_KEYWORD:
-
                 # check whether if the data_key is passed. We have to check both args
+                reg_name = arg_reg_name(p, 0)
+                reg_cnt_0 = getattr(path_copy.active[0].regs, reg_name)
+                reg_cnt_loaded_0 = core_taint.safe_load(path_copy, reg_cnt_0)
+                tainted_0 = core_taint.is_tainted(reg_cnt_0) or core_taint.is_tainted(reg_cnt_loaded_0, path=path_copy)
 
-                reg_off = ordered_argument_regs[p.arch.name][0]
-                reg_name = p.arch.register_names[reg_off]
-                reg_cnt = getattr(path_copy.active[0].regs, reg_name)
-                tainted_0 = core_taint.is_tainted(reg_cnt)
-                if not tainted_0:
-                    tainted_0 = core_taint.is_tainted(core_taint.safe_load(path_copy, reg_cnt), path=path_copy)
+                reg_name = arg_reg_name(p, 1)
+                reg_cnt_1 = getattr(path_copy.active[0].regs, reg_name)
+                reg_cnt_loaded_1 = core_taint.safe_load(path_copy, reg_cnt_1)
+                tainted_1 = core_taint.is_tainted(reg_cnt_1) or core_taint.is_tainted(reg_cnt_loaded_1)
 
-                reg_off = ordered_argument_regs[p.arch.name][1]
-                reg_name = p.arch.register_names[reg_off]
-                reg_cnt = getattr(path_copy.active[0].regs, reg_name)
-                tainted_1 = core_taint.is_tainted(reg_cnt)
-                if not tainted_1:
-                    tainted_1 = core_taint.is_tainted(core_taint.safe_load(path_copy, reg_cnt), path=path_copy)
-
-                tainted = tainted_0 | tainted_1
+                tainted = tainted_0 or tainted_1
                 if tainted:
                     self._sink_addr = block_caller_role_function
 
@@ -295,7 +226,7 @@ class File(CPF):
                 self._data_keys.append(data_key)
                 self._roles.append(candidate_role)
 
-                x_ref_fun = cfg.get_any_node(block_caller_role_function)
+                x_ref_fun = cfg.model.get_any_node(block_caller_role_function)
                 # if the data_key contains the ":%s", ":5d" and so forth, we remove it
                 data_key = data_key.split(":%")[0]
                 if data_key:
@@ -308,9 +239,10 @@ class File(CPF):
                         RoleInfo.ROLE_INS: addr,
                         RoleInfo.ROLE_INS_IDX: None,
                         RoleInfo.COMM_BUFF: None,
-                        RoleInfo.PAR_N: par_n,
+                        RoleInfo.PAR_N: arg_reg_id(p, reg_name),
                         RoleInfo.CPF: self._name
                     }
+
                     if key_addr not in self._role_info:
                         self._role_info[key_addr] = []
                     if info not in self._role_info[key_addr]:
@@ -342,23 +274,20 @@ class File(CPF):
 
             if role == Role.SETTER:
                 try:
-                    cmd = "grep -r '" + name_file + "' " + self._fw_path + " | grep Binary | awk '{print $3}'"
+                    cmd = f"grep -r '" + name_file + "' " + self._fw_path + " | grep Binary | awk '{print $3}'"
                 except:
                     fp = open('/mnt/shared/eccolo_il_', 'w')
-                    fp.write('namefile ' + str(name_file) + '\n')
-                    fp.write('fw_path ' + str(self._fw_path) + '\n')
+                    fp.write(f'namefile {str(name_file)}\n')
+                    fp.write(f'fw_path {str(self._fw_path)}\n')
                     fp.close()
                     continue
 
                 o, e = run_command(cmd)
-
-                candidate_bins = list(set([x for x in o.split('\n') if x]))
+                candidate_bins = list(set([x for x in o.decode().split('\n') if x]))
                 for b in candidate_bins:
-                    if LIB_KEYWORD in b:
+                    if LIB_KEYWORD in b or b in bins:
                         continue
-
-                    name = b.split('/')[-1]
-                    self._log.debug("Adding " + str(name))
+                    self._log.debug(f"Adding {os.path.basename(b)}")
                     bins.append(b)
 
         return list(set(bins))
