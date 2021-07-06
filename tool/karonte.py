@@ -26,7 +26,9 @@ class Karonte:
 
         self._fw_path = self._config['fw_path']
         if os.path.isfile(self._fw_path):
-            self._fw_path = unpack_firmware(self._fw_path)
+            log.info("Extracting firmware image. This may take a while...")
+            out_dir = self._fw_path + '.extracted'
+            self._fw_path = unpack_firmware(self._fw_path, out_dir)
 
         if log_path is None:
             if 'log_path' in self._config and self._config['log_path']:
@@ -64,10 +66,11 @@ class Karonte:
         # starting the analysis with less strings makes the analysis faster
         pf_str = BorderBinariesFinder.get_network_keywords()
         cpfs = [environment.Environment, file.File, socket.Socket, setter_getter.SetterGetter, semantic.Semantic]
-        bdg = BinaryDependencyGraph(self._config, self._border_bins, self._fw_extracted_path,
+        bdg = BinaryDependencyGraph(self._config, self._border_bins, self._fw_path,
                                     init_data_keys=pf_str, cpfs=cpfs, logger_obj=log)
         bdg.run()
 
+        log.info("Discovering Binary Dependency Graph")
         bf = BugFinder(self._config, bdg, analyze_parents, analyze_children, logger_obj=log)
         bf.run(report_alert=self._klog.save_alert, report_stats=self._klog.save_stats if self._add_stats else None)
 
