@@ -25,10 +25,14 @@ class Karonte:
         self._border_bins = [str(x) for x in self._config['bin']] if self._config['bin'] else []
 
         self._fw_path = self._config['fw_path']
-        if os.path.isfile(self._fw_path):
+        out_dir = os.path.join(os.path.dirname(self._fw_path), 'extracted')
+        archive_name = os.path.basename(self._fw_path)
+        if os.path.isfile(self._fw_path) and not os.path.isdir(out_dir):
             log.info("Extracting firmware image. This may take a while...")
-            out_dir = self._fw_path + '.extracted'
             self._fw_path = unpack_firmware(self._fw_path, out_dir)
+            self._fw_path = os.path.join(out_dir, archive_name)
+        elif os.path.isdir(out_dir):
+            self._fw_path = os.path.join(out_dir, archive_name)
 
         if log_path is None:
             if 'log_path' in self._config and self._config['log_path']:

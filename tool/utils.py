@@ -1,6 +1,5 @@
+import os
 from random import randint
-
-from binwalk.modules.extractor import *
 
 from libraries.extractor.extractor import Extractor
 
@@ -8,7 +7,7 @@ from libraries.extractor.extractor import Extractor
 MAX_THREADS = 3
 N_TYPE_DATA_KEYS = 4
 DEFAULT_LOG_PATH = "/tmp/Karonte.txt_" + str(randint(1, 100))
-
+DEFAULT_PICKLE_DIR = "/tmp/pickles"
 
 def unpack_firmware(fw_path, out_dir):
     """
