@@ -21,8 +21,10 @@ class Karonte:
         log = BarLogger("Karonte", "DEBUG")
         
         self._config = json.load(open(config_path))
+        # remove empty keys from the config
+        self._config = dict((k, v) for k, v in self._config.items() if v)
         self._pickle_parsers = self._config['pickle_parsers']
-        self._border_bins = [str(x) for x in self._config['bin']] if self._config['bin'] else []
+        self._border_bins = [str(x) for x in self._config['bin']] if 'bin' in self._config else []
 
         self._fw_path = self._config['fw_path']
         out_dir = os.path.join(os.path.dirname(self._fw_path), 'extracted')
