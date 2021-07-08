@@ -571,7 +571,7 @@ class BugFinder:
                         name_bin = self._ct.p.loader.main_object.binary
                         self._report_alert_fun('loop', name_bin, current_path, current_addr, cond_guard,
                                                pl_name=self._current_cpf_name, report_time=delta_t)
-           # clean up the copied state to prevent possible memory leaks
+            # clean up the copied state to prevent possible memory leaks
             for state in next_path.active + next_path.unconstrained:
                 state.history.trim()
                 state.downsize()

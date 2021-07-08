@@ -165,6 +165,7 @@ class BorderBinariesFinder:
 
         scores = sorted([(b, max(i['stats'])) for b, i in binaries.items()], key=lambda x: x[1], reverse=True)
         data = [s[1] for s in scores]
+        # TODO verify the epsilon
         # use a logarithmic scale, to make some of them fit with a bit larger epsilon than usual
         data_log = np.log(data)
         reshaped_data = np.array(data_log).reshape(-1, 1)
@@ -180,7 +181,7 @@ class BorderBinariesFinder:
 
         # otherwise we take all binaries with the same label as the highest scoring binary
         label_highest = labels[0]
-        return [[scores[i][0] for i, label in enumerate(labels) if label == label_highest]]
+        return [scores[i][0] for i, label in enumerate(labels) if label == label_highest]
 
     @property
     def border_binaries(self):
