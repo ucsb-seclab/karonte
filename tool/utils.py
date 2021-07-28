@@ -9,6 +9,7 @@ N_TYPE_DATA_KEYS = 4
 DEFAULT_LOG_PATH = "/tmp/Karonte.txt_" + str(randint(1, 100))
 DEFAULT_PICKLE_DIR = "/tmp/pickles"
 
+
 def unpack_firmware(fw_path, out_dir):
     """
     Unpacks the firmware
@@ -30,11 +31,3 @@ def unpack_firmware(fw_path, out_dir):
     extract.extract()
 
     return out_dir
-
-
-if __name__ == '__main__':
-    brand = "dlink"
-    binary = "DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip"
-    firmware_path = os.path.join("firmware_images", brand, binary)
-    if os.path.isfile(firmware_path):
-        firmware_path = unpack_firmware(firmware_path, brand)
