@@ -8,9 +8,9 @@ import angr
 
 from claripy import BVV
 
-from binary_dependency_graph.bdp_enum import *
-from binary_dependency_graph.cpfs import environment, file, socket, semantic, setter_getter
-from binary_dependency_graph.utils import *
+from bdg.bdp_enum import *
+from bdg.cpfs import environment, file, socket, semantic, setter_getter
+from bdg.utils import *
 from taint_analysis.coretaint import TimeOutException, CoreTaint
 from taint_analysis.utils import get_arity, arg_reg_name, arg_reg_names, get_arguments_call_with_instruction_address, \
     get_initial_state
@@ -893,22 +893,3 @@ class BinaryDependencyGraph:
         self._start_time = time.time()
         self._build_dependency_graph()
         self._end_time = time.time()
-
-
-# testing purposes
-# if __name__ == '__main__':
-#     # for now we will use all strings
-#     pf_str = BorderBinariesFinder.get_network_keywords()
-#     config = ...
-#     seed_bins = [
-#         'extracted_binaries/dlink/DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip.extracted/usr/sbin/iptables-multi',
-#         'extracted_binaries/dlink/DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip.extracted/usr/sbin/ip6tables-multi',
-#         'extracted_binaries/dlink/DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip.extracted/usr/sbin/wifidog',
-#         'extracted_binaries/dlink/DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip.extracted/usr/sbin/xmldb',
-#         'extracted_binaries/dlink/DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip.extracted/usr/sbin/rgbin',
-#         'extracted_binaries/dlink/DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip.extracted/sbin/httpd',
-#         'extracted_binaries/dlink/DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip.extracted/htdocs/cgibin']
-#
-#     enabled_cpfs = []
-#     bdg = BinaryDependencyGraph(config, seed_bins, , init_data_keys=pf_str, cpfs=enabled_cpfs)
-#     bdg.run()

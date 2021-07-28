@@ -2,10 +2,10 @@ import json
 import sys
 import angr
 import logging
-from binary_dependency_graph.binary_dependence_graph import BinaryDependencyGraph
-from binary_dependency_graph.cpfs import environment, semantic, file, socket, setter_getter
-from border_binaries_finder.border_binary_finder import BorderBinariesFinder
-from bug_finder.bug_finders import BugFinder
+from bdg.binary_dependency_graph import BinaryDependencyGraph
+from bdg.cpfs import environment, semantic, file, socket, setter_getter
+from bbf.border_binaries_finder import BorderBinariesFinder
+from bf.bug_finder import BugFinder
 from loggers.file_logger import FileLogger
 from loggers.bar_logger import BarLogger
 from utils import *

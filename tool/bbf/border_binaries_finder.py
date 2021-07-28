@@ -608,23 +608,3 @@ class BorderBinariesFinder:
         self._end_time = time.time()
         log.info(f"The discovered border binaries are: {self._border_binaries}")
         return self._border_binaries
-
-
-#
-# this is used for testing purpose
-#
-# if __name__ == "__main__":
-#     start_time = time.time()
-#
-#     brand = "dlink"
-#     fw_name = "DIR-868L_fw_revB_2-05b02_eu_multi_20161117.zip.extracted"
-#     # brand = ""
-#     # fw_name = "untitled1"
-#
-#     log = bar_logger.BarLogger("Karonte", "DEBUG")
-#
-#     pf = BorderBinariesFinder(os.path.join(DEFAULT_BINARY_DIR, brand, fw_name), logger_obj=log)
-#     # make a new directory for all the pickled files
-#     bb = pf.run(pickle_file=os.path.join(DEFAULT_PICKLE_DIR, brand, fw_name, f"{fw_name}_bbf.pk"))
-#
-#     end_time = time.time()
