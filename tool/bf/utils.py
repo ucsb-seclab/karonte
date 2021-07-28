@@ -1,4 +1,4 @@
-import bug_finder.sinks as sinks
+import bf.sinks as sinks
 
 ROUND = 5
 

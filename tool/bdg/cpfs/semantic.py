@@ -1,11 +1,11 @@
-from binary_dependency_graph.cpfs.__init__ import CPF
+from bdg.cpfs.__init__ import CPF
 
 import angr
 import itertools
 
 from taint_analysis.utils import get_arity, arg_reg_name, arg_reg_id, arg_reg_off
-from binary_dependency_graph.bdp_enum import Role, RoleInfo
-from binary_dependency_graph.utils import get_string, are_parameters_in_registers, contains
+from bdg.bdp_enum import Role, RoleInfo
+from bdg.utils import get_string, are_parameters_in_registers, contains
 from taint_analysis.coretaint import TimeOutException
 
 INDEXING_OPS = ('add', 'sub')

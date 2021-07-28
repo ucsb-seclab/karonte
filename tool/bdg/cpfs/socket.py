@@ -5,10 +5,9 @@ import struct
 from angr.procedures.stubs.ReturnUnconstrained import ReturnUnconstrained
 from claripy import BVV
 
-from binary_dependency_graph.bdp_enum import Role, RoleInfo
-from binary_dependency_graph.cpfs.__init__ import CPF
-from binary_dependency_graph.utils import are_parameters_in_registers, \
-    run_command, get_dyn_sym_addrs, get_string
+from bdg.bdp_enum import Role, RoleInfo
+from bdg.cpfs.__init__ import CPF
+from bdg.utils import are_parameters_in_registers, run_command, get_dyn_sym_addrs, get_string
 from taint_analysis.coretaint import TimeOutException, CoreTaint
 from taint_analysis.utils import arg_reg_name, arg_reg_id, get_initial_state, ret_reg_name
 

@@ -6,16 +6,9 @@ import networkx
 
 from archinfo import Endness
 
+from bbf.utils import EXTENDED_ALLOWED_CHARS, ALLOWED_CHARS, STR_LEN, MIN_STR_LEN
 from taint_analysis import summary_functions
 from taint_analysis.utils import get_ord_arguments_call, get_any_arguments_call, get_arity
-
-# Strings stuff
-MIN_STR_LEN = 3
-STR_LEN = 255
-ALLOWED_CHARS = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-/_'
-EXTENDED_CHARS = "%,.;+=)(*&^%$#@!~`|<>{}[]"
-EXTENDED_ALLOWED_CHARS = ALLOWED_CHARS + EXTENDED_CHARS
-SEPARATOR_CHARS = ('-', '_')
 
 # taint stuff
 TIMEOUT_TAINT = 60 * 5

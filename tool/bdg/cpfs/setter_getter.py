@@ -1,13 +1,13 @@
 import os
 
-from binary_dependency_graph.cpfs.__init__ import CPF, LIB_KEYWORD
+from bdg.cpfs.__init__ import CPF, LIB_KEYWORD
 
 import angr
 import itertools
 
 from taint_analysis.utils import arg_reg_id
-from binary_dependency_graph.utils import are_parameters_in_registers, run_command, get_addrs_string
-from binary_dependency_graph.bdp_enum import Role, RoleInfo
+from bdg.utils import are_parameters_in_registers, run_command, get_addrs_string
+from bdg.bdp_enum import Role, RoleInfo
 from taint_analysis.coretaint import TimeOutException
 
 

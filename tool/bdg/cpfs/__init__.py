@@ -1,10 +1,8 @@
 import logging
 import os
 
-from binary_dependency_graph.utils import run_command, get_string, are_parameters_in_registers, SEPARATOR_CHARS, \
-    EXTENDED_CHARS
-from binary_dependency_graph.bdp_enum import RoleInfo, Role
-from border_binaries_finder.utils import EXTENDED_NETWORK_KEYWORDS, NETWORK_KEYWORDS
+from bdg.utils import run_command, get_string, are_parameters_in_registers
+from bdg.bdp_enum import RoleInfo, Role
 from taint_analysis.coretaint import TimeOutException
 from taint_analysis.utils import get_arguments_call_with_instruction_address, arg_reg_id_by_off, arg_reg_off
 
@@ -150,19 +148,6 @@ class CPF:
                 return True
         return False
 
-    @staticmethod
-    def _is_possible_datakey(c_string) -> True:
-        """
-        Helper method to check if a certain string matches the parameters of allowed datakeys
-        :param c_string: the string to check
-        :return: if it could be a data_key or not
-        """
-        if not any([sep_char in c_string for sep_char in SEPARATOR_CHARS]) or \
-                any([extended_char in c_string for extended_char in EXTENDED_CHARS]) or \
-                not any([word in c_string.lower() for word in EXTENDED_NETWORK_KEYWORDS + NETWORK_KEYWORDS]):
-            return False
-        return True
-
     def _search_in_bb(self, caller_node, role_function_info):
         """
         Search for a data key in the passed basic block.
@@ -194,9 +179,6 @@ class CPF:
 
         for strings_addr in set(strings_addrs):
             c_string = get_string(p, strings_addr, extended=True)
-            # skip all strings that do not look like a datakey or contain possible
-            if not self._is_possible_datakey(c_string):
-                continue
             if c_string:
                 if strings_addr not in self._role_info:
                     self._role_info[strings_addr] = []

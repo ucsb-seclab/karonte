@@ -1,6 +1,6 @@
 import signal
 import time
-from binary_dependency_graph.bdp_enum import RoleInfo, Role
+from bdg.bdp_enum import RoleInfo, Role
 from loggers.utils import *
 import json
 import copy
