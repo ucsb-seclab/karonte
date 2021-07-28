@@ -8,6 +8,7 @@ import angr
 
 from claripy import BVV
 
+from bbf.utils import SEPARATOR_CHARS
 from bdg.bdp_enum import *
 from bdg.cpfs import environment, file, socket, semantic, setter_getter
 from bdg.utils import *

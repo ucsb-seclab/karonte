@@ -70,7 +70,7 @@ class Karonte:
 
         log.info("Generating Binary Dependency Graph")
         # starting the analysis with less strings makes the analysis faster
-        pf_str = BorderBinariesFinder.get_network_keywords()
+        pf_str = BorderBinariesFinder.get_network_keywords(end=N_TYPE_DATA_KEYS)
         cpfs = [environment.Environment, file.File, socket.Socket, setter_getter.SetterGetter, semantic.Semantic]
         bdg = BinaryDependencyGraph(self._config, self._border_bins, self._fw_path,
                                     init_data_keys=pf_str, cpfs=cpfs, logger_obj=log)
