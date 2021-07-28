@@ -5,8 +5,8 @@ import angr
 import logging
 from random import shuffle
 
-from binary_dependency_graph.utils import prepare_function_summaries
-from border_binaries_finder.utils import *
+from bdg.utils import prepare_function_summaries
+from bbf.utils import *
 from taint_analysis.coretaint import TimeOutException, CoreTaint
 from taint_analysis.utils import arg_reg_name, ret_reg_name, get_arity, arg_reg_names, get_initial_state
 

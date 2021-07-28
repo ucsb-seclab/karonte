@@ -1,4 +1,4 @@
-from binary_dependency_graph.utils import are_parameters_in_registers, get_string
+from bdg.utils import are_parameters_in_registers, get_string
 from taint_analysis.utils import arg_reg_name
 
 

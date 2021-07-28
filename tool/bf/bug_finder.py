@@ -5,15 +5,14 @@ import time
 import angr
 from claripy import pickle
 
-from border_binaries_finder.utils import NETWORK_KEYWORDS
+from bbf.utils import NETWORK_KEYWORDS
 from loggers import bar_logger
-from binary_dependency_graph.binary_dependence_graph import BinaryDependencyGraph, RoleInfo, Role
-from binary_dependency_graph.utils import get_ord_arguments_call, get_any_arguments_call, are_parameters_in_registers, \
+from bdg.binary_dependency_graph import BinaryDependencyGraph, RoleInfo, Role
+from bdg.utils import get_ord_arguments_call, get_any_arguments_call, are_parameters_in_registers, \
     get_mem_string, STR_LEN, get_dyn_sym_addr, find_memcpy_like, get_reg_used, get_addrs_similar_string, \
-    prepare_function_summaries, get_addrs_string, get_string
-from border_binaries_finder.border_binary_finder import BorderBinariesFinder
-from bug_finder import sinks
-from bug_finder.utils import TIMEOUT_TAINT, TIMEOUT_TRIES, SINK_FUNCS
+    prepare_function_summaries, get_string
+from bf import sinks
+from bf.utils import TIMEOUT_TAINT, TIMEOUT_TRIES, SINK_FUNCS
 from taint_analysis.coretaint import TimeOutException, CoreTaint
 from taint_analysis.utils import arg_reg_id, get_initial_state, arg_reg_name, \
     get_arguments_call_with_instruction_address, arg_reg_names, get_arity

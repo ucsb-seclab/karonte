@@ -15,13 +15,13 @@ from archinfo import Endness
 from sklearn.cluster import DBSCAN
 
 from loggers import bar_logger
-from border_binaries_finder.binary_finder import *
-from border_binaries_finder.forward_backward_taint_tracker import ForwardBackWardTaintTracker
-from border_binaries_finder.utils import *
+from bbf.binary_finder import *
+from bbf.forward_backward_taint_tracker import ForwardBackWardTaintTracker
+from bbf.utils import *
 from config import *
 from taint_analysis.utils import arg_reg_off, arg_reg_names, get_arity
-from binary_dependency_graph.utils import get_mem_string
-from binary_dependency_graph.cpfs import LIB_KEYWORD
+from bdg.utils import get_mem_string
+from bdg.cpfs import LIB_KEYWORD
 
 # logging.basicConfig()
 from utils import MAX_THREADS, DEFAULT_PICKLE_DIR
@@ -304,16 +304,12 @@ class BorderBinariesFinder:
         except:
             return
 
-        # we will also skip libraries, since those are never the border binaries
-        if LIB_KEYWORD in b:
-            log.debug(f"Skipped generation of CFG for library: {os.path.basename(b)}")
-            return
-
         # As a speed optimization, we will first check if there are actually sinks. Those cannot be a border binary
         # otherwise we will skip the generation of the cfg and stats. This is a significant speedup
+        # we will also skip libraries, since those are never the border binaries
         items = [(x, y) for x, y in p.loader.main_object.plt.items() if any(s_m in x for s_m in CMP_SUCCS)]
-        if not items:
-            log.debug(f"Skipped generation of CFG, since there are no memcmp's in {os.path.basename(b)}")
+        if LIB_KEYWORD in b or not items:
+            log.debug(f"Skipped generation of CFG: {os.path.basename(b)}")
             return
 
         try:
