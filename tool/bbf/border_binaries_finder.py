@@ -563,9 +563,7 @@ class BorderBinariesFinder:
             os.makedirs(pickle_dir)
 
         fp = open(pickle_file, 'wb')
-        # added the sources and border binaries to the pickle, to make the retrieval easier
-        pickle.dump((self._candidates, self._stats, self._multiplier, self._border_binaries,
-                     self._sources, self._sinks, self._fw_path, self._network_data_is_checked), fp)
+        pickle.dump((self._candidates, self._stats, self._multiplier), fp)
         fp.close()
 
     def analysis_time(self):
@@ -588,8 +586,7 @@ class BorderBinariesFinder:
         self._start_time = time.time()
         if pickle_file and os.path.isfile(pickle_file):
             with open(pickle_file, 'rb') as fp:
-                self._candidates, self._stats, self._multiplier, self._border_binaries, \
-                    self._sources, self._sinks, self._fw_path, self._network_data_is_checked = pickle.load(fp)
+                self._candidates, self._stats, self._multiplier = pickle.load(fp)
         else:
             if not pickle_file:
                 pickle_dir = DEFAULT_PICKLE_DIR
