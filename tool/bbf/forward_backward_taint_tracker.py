@@ -27,7 +27,7 @@ class ForwardBackWardTaintTracker:
         This class implements the connection mark.
 
         :param p: angr project
-        :param cfg the cfg model. saves time sif we do not have to recalculate this every time
+        :param cfg: the cfg model.
         :param sources: list of sources
         :param sinks:  list of sinks
         """

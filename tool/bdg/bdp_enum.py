@@ -23,7 +23,6 @@ strings information about the node, they are:
 * the role function
 * the instruction used to define the role
 * VEX idx of the instruction defining the role
-* The register used to infer the role (the one that was either copied or the string compared against)
 * if shared memory, the buffer used to share data
 * parameter id of function used to set or get the share data
 """

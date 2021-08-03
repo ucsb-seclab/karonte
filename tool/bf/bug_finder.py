@@ -49,8 +49,6 @@ class BugFinder:
             RoleInfo.PAR_N: None
         }
 
-        self.sym_vars = []
-
         self._analyze_parents = analyze_parents
         self._analyze_children = analyze_children
         self._analysis_starting_time = None
@@ -81,8 +79,6 @@ class BugFinder:
 
         def is_arg_key(arg):
             return hasattr(arg, 'args') and isinstance(arg.args[0], int) and arg.args[0] == self._current_seed_addr
-
-        self.sym_vars = []
 
         p = self._current_p
         ins_args = get_ord_arguments_call(p, addr)
@@ -117,9 +113,6 @@ class BugFinder:
             if reg_name == data_key_reg:
                 # load the contents of the register
                 current_path.active[0].add_constraints(loaded == tainted_var)
-            else:
-                # the list of symbolic variables should not be the register that defined the role
-                self.sym_vars.append((reg_name, tainted_var))
 
     def _find_sink_addresses(self):
         """
@@ -471,11 +464,6 @@ class BugFinder:
                 raise to
             except Exception as e:
                 pass
-
-            # also check if the coretaint module also added taint to a return register and add it to the list of symvars
-            if self._ct.sym_vars:
-                self.sym_vars.extend(self._ct.sym_vars)
-                self._ct.sym_vars = []  # remove the symvars, so that they will not be added twice
 
             if self._is_sink_and_tainted(current_path, next_path):
                 delta_t = time.time() - self._analysis_starting_time

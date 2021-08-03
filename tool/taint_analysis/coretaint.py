@@ -103,8 +103,6 @@ class CoreTaint:
         self._only_tracker = only_tracker
         self._try_to_avoid_z3 = 3
 
-        self.sym_vars = []
-
         if exploration_strategy is not None and (shuffle_sat or reverse_sat):
             log.warning("Exploration strategy takes precedence over state shuffling/reversing")
 
@@ -688,9 +686,7 @@ class CoreTaint:
             for s_addr in self._summarized_f.keys():
                 if addr == s_addr:
                     # execute and store possible new symbolic variables (get_env etc)
-                    possible_sym_var = self._summarized_f[s_addr](self, prev_path, suc_path)
-                    if possible_sym_var:
-                        self.sym_vars.append(possible_sym_var)
+                    self._summarized_f[s_addr](self, prev_path, suc_path)
                     return True
         return False
 

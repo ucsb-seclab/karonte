@@ -128,10 +128,6 @@ class BorderBinariesFinder:
         self._start_time = None
         self._end_time = None
 
-        # for this research, we added some storage of the sources
-        self._sources = {}
-        self._sinks = {}
-
     @staticmethod
     def get_network_keywords(start=None, end=None, ):
         """
@@ -274,11 +270,6 @@ class BorderBinariesFinder:
         # add the calculated outputs to the class entries
         for entry in [x for x in output if x]:
             b, bin_sources, bin_sinks, stats, multiplier, tot_bb, network_data_is_checked = entry
-            # only add the sources or sinks if there are any
-            if bin_sources:
-                self._sources[b] = bin_sources
-            if bin_sinks:
-                self._sinks[b] = bin_sinks
             self._stats.update(stats)
             self._multiplier[b] = multiplier
             self._tot_fw_bb[b] = tot_bb

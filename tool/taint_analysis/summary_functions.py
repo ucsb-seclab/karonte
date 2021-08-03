@@ -369,16 +369,12 @@ def _getenv(_core, call_site_addr, plt_path):
     cnt_mem = _core.safe_load(plt_path, reg)
     key = str(reg)
 
-    sym_var = None
-
     # this info is passed by some user controllable source
     if _core.is_tainted(reg, path=plt_path) or _core.is_tainted(cnt_mem, path=plt_path):
         to_store = _core.get_sym_val(name=_core.taint_buf, bits=env_var_size)
-        sym_var = to_store
     # it was set before
     elif key in env_var:
         to_store = env_var[key]
-        sym_var = to_store
     # fresh symbolic var
     else:
         to_store = _core.get_sym_val(name="env_var", bits=env_var_size)
@@ -397,8 +393,6 @@ def _getenv(_core, call_site_addr, plt_path):
     # set the return address to the pointer
     setattr(plt_path.active[0].regs, ret_reg_name(p), addr)
 
-    return ret_reg_name(p), sym_var
-
 
 def env(_core, call_site_path, plt_path):
     """
@@ -408,16 +402,14 @@ def env(_core, call_site_path, plt_path):
     :param plt_path: path to the plt (i.e., call_site.step())
     :return:
     """
-    sym_var = None
     fname = _get_function_name(plt_path.active[0].addr, _core.p)
     if fname == 'setenv':
         _setenv(_core, call_site_path, plt_path)
     elif fname == 'getenv':
-        sym_var = _getenv(_core, call_site_path, plt_path)
+        _getenv(_core, call_site_path, plt_path)
     else:
         print(f"Implement this Env function: {fname}")
     # return the env_var if tainted to store for bug_finders
-    return sym_var
 
 
 #
