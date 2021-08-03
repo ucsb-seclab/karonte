@@ -156,12 +156,12 @@ class BorderBinariesFinder:
 
         :return: the parser with the highest parsing score
         """
+        # TODO, this is not correctly implemented. I updated this to get it to return at least something.
         if not binaries.items():
             return []
 
         scores = sorted([(b, max(i['stats'])) for b, i in binaries.items()], key=lambda x: x[1], reverse=True)
         data = [s[1] for s in scores]
-        # TODO verify the epsilon
         # use a logarithmic scale, to make some of them fit with a bit larger epsilon than usual
         data_log = np.log(data)
         reshaped_data = np.array(data_log).reshape(-1, 1)
