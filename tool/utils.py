@@ -8,6 +8,7 @@ MAX_THREADS = 3
 N_TYPE_DATA_KEYS = 4
 DEFAULT_LOG_PATH = "/tmp/Karonte.txt_" + str(randint(1, 100))
 DEFAULT_PICKLE_DIR = "/tmp/pickles"
+FW_TMP_DIR = '/tmp/fw/'
 
 
 def unpack_firmware(fw_path, out_dir):
