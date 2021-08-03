@@ -768,7 +768,6 @@ class BinaryDependencyGraph:
                             if any([r for r in i_roles if r != Role.UNKNOWN]):
                                 roles[b] += i_roles
                                 cpfs_used.append(cpf_used)
-                                # TODO, should we really stop after one find???
                                 break
                     count -= 1
             # add a new node
