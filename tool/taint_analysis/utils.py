@@ -5,15 +5,12 @@ _ordered_argument_regs_names = {
     'ARMEL': ['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11', 'r12'],
     'AARCH64': ['x0', 'x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7'],
     'MIPS32': ['a0', 'a1', 'a2', 'a3'],
-    'AMD64': ['rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9']
 }
 
-# automatically generate the offset dictionaries, since this was removed by angr
 _archinfo_by_string = {
     'ARMEL': archinfo.ArchARMEL,
     'AARCH64': archinfo.ArchAArch64,
     'MIPS32': archinfo.ArchMIPS32,
-    'AMD64': archinfo.ArchAMD64
 }
 
 
