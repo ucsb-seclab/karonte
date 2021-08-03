@@ -769,7 +769,7 @@ class BinaryDependencyGraph:
                                 roles[b] += i_roles
                                 cpfs_used.append(cpf_used)
                                 # TODO, should we really stop after one find???
-                                # break
+                                break
                     count -= 1
             # add a new node
             nodes[b] = BdgNode(self._current_p, self._current_cfg, cpfs_used)

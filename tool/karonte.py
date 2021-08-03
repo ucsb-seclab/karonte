@@ -27,12 +27,15 @@ class Karonte:
         self._border_bins = [str(x) for x in self._config['bin']] if 'bin' in self._config else []
 
         self._fw_path = self._config['fw_path']
-        out_dir = os.path.join(os.path.dirname(self._fw_path), 'extracted')
+        out_dir = os.path.join(os.path.dirname(self._fw_path), 'extracted', os.path.basename(self._fw_path))
         archive_name = os.path.basename(self._fw_path)
         if os.path.isfile(self._fw_path) and not os.path.isdir(out_dir):
+            owd = os.getcwd()
             log.info("Extracting firmware image. This may take a while...")
             self._fw_path = unpack_firmware(self._fw_path, out_dir)
             self._fw_path = os.path.join(out_dir, archive_name)
+            # the extractor messes up the working directory. reset it
+            os.chdir(owd)
         elif os.path.isdir(out_dir):
             self._fw_path = os.path.join(out_dir, archive_name)
 

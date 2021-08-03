@@ -349,10 +349,8 @@ class BugFinder:
 
         :return:
         """
-
-        # todo, since the BDG did not find a root for Dlink, we will consider all parents as root
-        roots = [f for f, c in self._bdg.graph.items() if len(c) != 0]
-        # roots = [x for x in self._bdg.nodes if x.root]
+        # roots = [f for f, c in self._bdg.graph.items() if len(c) != 0]
+        roots = [x for x in self._bdg.nodes if x.root]
         worklist = roots
         analyzed_dk = {}
 
