@@ -4,6 +4,10 @@
 
 Karonte is a static analysis tool to detect multi-binary vulnerabilities in embedded firmware.
 
+This branch contains the original implementation of Karonte as in our IEEE S&P'20 paper.
+
+**Note that the master branch contains an updated and improved implementation of Karonte, ported to python 3.**
+
 ## Overview
 
 <img src="overview.png" width="60%">
@@ -56,8 +60,8 @@ To inspect the generated alerts, just run:
 > &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; python **tool/pretty_print.py** LOG_NAME
 
 ## Docker
-A dockerized version of Karonte ready to use can be found [here](https://hub.docker.com/r/badnack/karonte)
+A dockerized version of Karonte ready to use can be found [here](https://hub.docker.com/r/badnack/karonte).
 
 ## Dataset
-You can obtain Karonte dataset at this [link](https://drive.google.com/file/d/1-VOf-tEpu4LIgyDyZr7bBZCDK-K2DHaj/view?usp=sharing)
+You can obtain the dataset that we used to evaluate Karonte at this [link](https://drive.google.com/file/d/1-VOf-tEpu4LIgyDyZr7bBZCDK-K2DHaj/view?usp=sharing).
 
