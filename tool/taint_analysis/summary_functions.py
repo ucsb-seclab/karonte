@@ -1,19 +1,16 @@
 """
-Though karonte relies on angr's simprocedures, sometimes these add in the current state some contraints to make the
-used analysis faster. For example, if a malloc has an unconstraint size, angr add the constraint
+Though karonte relies on angr's sim procedures, sometimes these add in the current state some constraints to make the
+used analysis faster. For example, if a malloc has an unconstrained size, angr add the constraint
 size == angr-defined.MAX_SIZE. Though this makes the analysis faster, it makes impossible to reason about the maximum
 buffer sizes (as needed by karonte).
 
-In this module we wrap simprocedures to avoid them to add such constraints.
+In this module we wrap sim procedures to avoid them to add such constraints.
 
 Note however, that the semantic of an expression might get lost.
 Eg. strlen(taint_x) = taint_y, taint_y is an unconstrained variable
 """
 
-from coretaint import *
-import claripy
-
-simplify_memcpy = False
+from taint_analysis.coretaint import *
 
 
 def _get_function_name(addr, p):
@@ -24,34 +21,7 @@ def _get_function_name(addr, p):
     :param p: angr project
     :return: function name
     """
-
-    if addr in p.loader.main_object.reverse_plt:
-        return p.loader.main_object.reverse_plt[addr]
-    return None
-
-
-def _restore_caller_regs(_core, old_path, new_path):
-    """
-    Restore the caller registers (this simulate a return from a summarized function)
-
-    :param _core: core taint engine
-    :param old_path: old angr path (the from where the function is returning from)
-    :param new_path: new angr path (the program point where the execution is returning)
-    :return:
-    """
-
-    p = _core.p
-    new_state = new_path.active[0]
-    old_state = old_path.active[0]
-
-    lr = p.arch.register_names[link_regs[p.arch.name]]
-
-    ret_addr = getattr(new_state.regs, lr)
-    ret_func = getattr(old_state.regs, lr)
-
-    new_path.active[0].ip = ret_addr
-    setattr(new_path.active[0].regs, lr, ret_func)
-    new_path.active[0].history.jumpkind = "Ijk_FakeRet"
+    return p.loader.find_plt_stub_name(addr)
 
 
 def source_dummy(*_, **__):
@@ -69,17 +39,16 @@ def memcmp_unsized(_core, _, plt_path):
     """
 
     p = _core.p
-    plt_path_cp = plt_path.copy(copy_states=True)
 
     dst_reg = arg_reg_name(p, 0)
     src_reg = arg_reg_name(p, 1)
 
-    b1 = _core.safe_load(plt_path_cp, getattr(plt_path_cp.active[0].regs, dst_reg))
-    b2 = _core.safe_load(plt_path_cp, getattr(plt_path_cp.active[0].regs, src_reg))
+    b1 = _core.safe_load(plt_path, getattr(plt_path.active[0].regs, dst_reg))
+    b2 = _core.safe_load(plt_path, getattr(plt_path.active[0].regs, src_reg))
 
-    if not _core.is_tainted(b1, plt_path_cp):
+    if not _core.is_tainted(b1, plt_path):
         b1 = None
-    if not _core.is_tainted(b2, plt_path_cp):
+    if not _core.is_tainted(b2, plt_path):
         b2 = None
 
     # if either of the two is not tainted, we untaint the other
@@ -89,10 +58,10 @@ def memcmp_unsized(_core, _, plt_path):
         _core.do_recursive_untaint(b2, plt_path)
 
     # step into it
-    plt_path_cp.step()
-    assert _core.p.is_hooked(plt_path_cp.active[0].addr), "memcmp_unsized: Summary function relies on angr's " \
-                                                          "sim procedure, add option use_sim_procedures to the loader"
-    plt_path.step().step()
+    plt_path.step()
+    assert _core.p.is_hooked(plt_path.active[0].addr), "memcmp_unsized: Summary function relies on angr's " \
+                                                       "sim procedure, add option use_sim_procedures to the loader"
+    plt_path.step()
 
 
 def memcmp_sized(_core, _, plt_path):
@@ -106,21 +75,20 @@ def memcmp_sized(_core, _, plt_path):
     """
 
     p = _core.p
-    plt_path_cp = plt_path.copy(copy_states=True)
 
     dst_reg = arg_reg_name(p, 0)
     src_reg = arg_reg_name(p, 1)
     reg_n = arg_reg_name(p, 2)
 
-    b1 = _core.safe_load(plt_path_cp, getattr(plt_path_cp.active[0].regs, dst_reg))
-    b2 = _core.safe_load(plt_path_cp, getattr(plt_path_cp.active[0].regs, src_reg))
-    n = _core.safe_load(plt_path_cp, getattr(plt_path_cp.active[0].regs, reg_n))
+    b1 = _core.safe_load(plt_path, getattr(plt_path.active[0].regs, dst_reg))
+    b2 = _core.safe_load(plt_path, getattr(plt_path.active[0].regs, src_reg))
+    n = _core.safe_load(plt_path, getattr(plt_path.active[0].regs, reg_n))
 
     # we untaint buffers only if n is not tainted
-    if not _core.is_tainted(n, plt_path_cp):
-        if not _core.is_tainted(b1, plt_path_cp):
+    if not _core.is_tainted(n, plt_path):
+        if not _core.is_tainted(b1, plt_path):
             b1 = None
-        if not _core.is_tainted(b2, plt_path_cp):
+        if not _core.is_tainted(b2, plt_path):
             b2 = None
 
         # if either of the two is not tainted, we untaint the other
@@ -130,10 +98,10 @@ def memcmp_sized(_core, _, plt_path):
             _core.do_recursive_untaint(b2, plt_path)
 
     # step into it
-    plt_path_cp.step()
-    assert _core.p.is_hooked(plt_path_cp.active[0].addr), "memcmp_sized: Summary function relies on angr's " \
-                                                          "sim procedure, add option use_sim_procedures to the loader"
-    plt_path.step().step()
+    plt_path.step()
+    assert _core.p.is_hooked(plt_path.active[0].addr), "memcmp_sized: Summary function relies on angr's " \
+                                                       "sim procedure, add option use_sim_procedures to the loader"
+    plt_path.step()
 
 
 def memcpy_sized(_core, call_site_path, plt_path):
@@ -148,50 +116,43 @@ def memcpy_sized(_core, call_site_path, plt_path):
 
     p = _core.p
 
-    plt_path_cp = plt_path.copy(copy_states=True)
-
     # if the second parameter is tainted (or pointing to a tainted location)
     # or the third is tainted, we taint the first too
-    plt_state_cp = plt_path_cp.active[0]
-
     dst_reg = arg_reg_name(p, 0)
+    dst = getattr(plt_path.active[0].regs, dst_reg)
+    dst_loaded = _core.safe_load(plt_path, dst)
+
     src_reg = arg_reg_name(p, 1)
+    src = getattr(plt_path.active[0].regs, src_reg)
+    src_loaded = _core.safe_load(plt_path, src)
+
     reg_n = arg_reg_name(p, 2)
+    n = getattr(plt_path.active[0].regs, reg_n)
+    # n_loaded = _core.safe_load(plt_path_cp, size)
 
-    size = getattr(plt_state_cp.regs, reg_n)
-    src = getattr(plt_state_cp.regs, src_reg)
-    dst = getattr(plt_state_cp.regs, dst_reg)
+    plt_path.step()
+    assert _core.p.is_hooked(plt_path.active[0].addr), "memcpy_sized: Summary function relies on angr's " \
+                                                       "sim procedure, add option use_sim_procedures to the loader"
+    plt_path.step()
 
-    if simplify_memcpy and plt_state_cp.se.max_int(size) >= plt_state_cp.libc.max_memcpy_size:
-        # we propagate th taint only if the src is tainted as well as the size, if not the dst
-        # is untainted
-        if (_core.is_tainted(src, path=plt_path_cp) or _core.is_tainted(_core.safe_load(plt_path_cp, src),
-                                                                        path=plt_path_cp)) and \
-                        _core.is_tainted(size, path=plt_path_cp):
-            t = _core.get_sym_val(name=_core.taint_buf, bits=_core.taint_buf_size).reversed
-        else:
-            t = _core.get_sym_val(name="memcpy_unc_buff", bits=plt_state_cp.libc.max_memcpy_size).reversed
+    if not plt_path.active:
+        raise Exception("size of function has no active successors, not walking this path...")
 
-        plt_path.active[0].memory.store(getattr(plt_path.active[0].regs, dst_reg), t)
+    # apply taint to dst if source is tainted and constrain this buffer
+    # TODO take N into account
+    if _core.is_tainted(src_loaded, path=plt_path):
+        src_loaded_full = _core.safe_load(plt_path, src, estimate_size=True)
+        new_dst_t = _core.get_sym_val(name=_core.taint_buf, bits=src_loaded_full.length).reversed
+        _core.add_taint_glob_dep(new_dst_t, src_loaded_full, plt_path)
+        plt_path.active[0].add_constraints(src_loaded_full == new_dst_t)
+        plt_path.active[0].memory.store(dst, new_dst_t)
 
-        # restore the register values to return the call
-        _restore_caller_regs(_core, call_site_path, plt_path)
-
-    else:
-        plt_path_cp.step()
-        assert _core.p.is_hooked(plt_path_cp.active[0].addr), "memcpy_sized: Summary function relies on angr's " \
-                                                              "sim procedure, add option use_sim_procedures to the " \
-                                                              "loader"
-        plt_path.step().step()
-        if not plt_path.active:
-            raise Exception("size of function has no active successors, not walking this path...")
-
-        # untaint if the size is constrained
-        if (_core.is_tainted(dst, path=plt_path_cp) or
-                _core.is_tainted(_core.safe_load(plt_path_cp, dst), path=plt_path_cp)) and \
-                not _core.is_tainted(size, path=plt_path_cp):
-            # do untaint
-            _core.do_recursive_untaint(dst, plt_path)
+    # untaint if the size is constrained
+    if (_core.is_tainted(dst, path=plt_path) or
+            _core.is_tainted(dst_loaded, path=plt_path)) and \
+            not _core.is_tainted(n, path=plt_path):
+        # do untaint
+        _core.do_recursive_untaint(dst_loaded, plt_path)
 
 
 def memcpy_unsized(_core, call_site_path, plt_path):
@@ -203,36 +164,37 @@ def memcpy_unsized(_core, call_site_path, plt_path):
     :param plt_path:  path to the plt (i.e., call_site.step())
     :return: None
     """
-
     p = _core.p
 
-    # FIXME do taint untaint!
-    plt_path_cp = plt_path.copy(copy_states=True)
-    plt_state_cp = plt_path_cp.active[0]
+    dst_reg = arg_reg_name(p, 0)
+    dst = getattr(plt_path.active[0].regs, dst_reg)
+    # dst_loaded = _core.safe_load(plt_path_cp, dst, estimate_size=True)
 
-    src = getattr(plt_state_cp.regs, arg_reg_name(p, 1))
+    src_reg = arg_reg_name(p, 1)
+    src = getattr(plt_path.active[0].regs, src_reg)
+    src_loaded = _core.safe_load(plt_path, src)
 
-    if _core.is_tainted(src, path=plt_path_cp) or _core.is_tainted(_core.safe_load(plt_path_cp, src), path=plt_path_cp):
-        # FIXME: make the actual copy so that taint dependency will be respected
-        t = _core.get_sym_val(name=_core.taint_buf, bits=_core.taint_buf_size).reversed
-    else:
-        plt_path_cp.step()
-        assert _core.p.is_hooked(plt_path_cp.active[0].addr), "memcpy_unsized: Summary function relies on angr's " \
-                                                              "sim procedure, add option use_sim_procedures to the " \
-                                                              "loader"
-        plt_path.step().step()
-        if not plt_path.active:
-            raise Exception("size of function has no active successors, not walking this path...")
-        return
+    # run the sim procedure
+    plt_path.step()
+    assert _core.p.is_hooked(plt_path.active[0].addr), "memcpy_unsized: Summary function relies on angr's " \
+                                                       "sim procedure, add option use_sim_procedures to the loader"
+    plt_path.step()
 
-    dst = getattr(plt_path.active[0].regs, arg_reg_name(p, 0))
-    plt_path.active[0].memory.store(dst, t)
+    if not plt_path.active:
+        raise Exception("size of function has no active successors, not walking this path...")
 
-    # restore the register values to return the call
-    _restore_caller_regs(_core, call_site_path, plt_path)
+    # apply taint to dst if source is tainted and constrain this buffer
+    if _core.is_tainted(src_loaded, path=plt_path):
+        src_loaded_full = _core.safe_load(plt_path, src, estimate_size=True)
+        new_dst_t = _core.get_sym_val(name=_core.taint_buf, bits=src_loaded_full.length).reversed
+        _core.add_taint_glob_dep(new_dst_t, src_loaded_full, plt_path)
+        plt_path.active[0].add_constraints(src_loaded_full == new_dst_t)
+        plt_path.active[0].memory.store(dst, new_dst_t)
+
 
 def is_size_taint(v):
     return '__size__' in str(v)
+
 
 def sizeof(_core, call_site_path, plt_path):
     """
@@ -243,53 +205,35 @@ def sizeof(_core, call_site_path, plt_path):
     :param plt_path:  path to the plt (i.e., call_site.step())
     :return: None
     """
-
     p = _core.p
-    plt_path_cp = plt_path.copy(copy_states=True)
-    plt_state_cp = plt_path_cp.active[0]
 
-    n = getattr(plt_state_cp.regs, arg_reg_name(p, 0))
+    n = getattr(plt_path.active[0].regs, arg_reg_name(p, 0))
 
-    cnt = _core.safe_load(plt_path_cp, n, _core.taint_buf_size/8)
-    # if parameter is tainted (or pointing to a tainted location)
-    if _core.is_tainted(n, path=plt_path_cp) or _core.is_tainted(cnt, path=plt_path_cp):
-        t = _core.get_sym_val(name=(_core.taint_buf + '__size__'), bits=_core.p.arch.bits).reversed
+    cnt = _core.safe_load(plt_path, n, _core.taint_buf_size/8)
+
+    # use the sim procedure to continue to the next state and add constraints
+    plt_path.step()
+    assert _core.p.is_hooked(plt_path.active[0].addr), "sizeof: Summary function relies on angr's " \
+                                                       "sim procedure, add option use_sim_procedures to the loader"
+    plt_path.step()
+    if not plt_path.active:
+        raise Exception("size of function has no active successors, not walking this path...")
+
+    return_value = getattr(plt_path.active[0].regs, ret_reg_name(p))
+
+    # TODO: check if the constraints set by angr sim procedure are correct
+    # if there is a tainted buffer in one of the registers then also taint this variable
+    if _core.is_tainted(cnt, path=plt_path) or _core.is_tainted(n, path=plt_path):
+        t = _core.get_sym_val(name=(_core.taint_buf + '__size__'), bits=p.arch.bits).reversed
         _core.add_taint_glob_dep(t, cnt, plt_path)
-        setattr(plt_path.active[0].regs, arg_reg_name(p, 0), t)
+        # constrain output of this variable equal to the output of sizeof and add it to the return register
+        plt_path.active[0].add_constraints(return_value == t)
+        setattr(plt_path.active[0].regs, ret_reg_name(p), t)
 
-    # not tainted, but symbolic and huge
-    elif cnt.symbolic:
-        # check whether it has a limited size
-        for i in xrange(0, plt_state_cp.libc.max_str_len):
-            cnt_i = _core.safe_load(plt_path_cp, n + i, 1)
-            vals = plt_state_cp.se.eval_upto(cnt_i, 2)
-            if len(vals) == 1 and vals[0] == 0:
-                t = claripy.BVV(i, _core.p.arch.bits)
-                break
-        else:
-            # ok, uncontrain it
-            t = _core.get_sym_val(name="ret_sizeof_kind", bits=_core.p.arch.bits)
-        setattr(plt_path.active[0].regs, arg_reg_name(p, 0), t)
-
-    # we use simprocedure for all the other cases
-    else:
-        plt_path_cp.step()
-        assert _core.p.is_hooked(plt_path_cp.active[0].addr), "sizeof: Summary function relies on angr's " \
-                                                              "sim procedure, add option use_sim_procedures to the " \
-                                                              "loader"
-        plt_path.step().step()
-        if not plt_path.active:
-            raise Exception("size of function has no active successors, not walking this path...")
-        return
-
-    # restore the register values to return the call
-    _restore_caller_regs(_core, call_site_path, plt_path)
 
 #
 # Heap functions
 #
-
-
 def _malloc(_core, _, plt_path):
     """
     maclloc function summary
@@ -298,22 +242,24 @@ def _malloc(_core, _, plt_path):
     :param plt_path: path to the plt (i.e., call_site.step())
     :return: None
     """
-
     p = _core.p
 
     state = plt_path.active[0]
     sim_size = getattr(state.regs, arg_reg_name(p, 0))
 
-    if state.se.symbolic(sim_size):
-        size = state.se.max_int(sim_size)
+    # when the size is symbolic, choose the maximum size possible
+    if state.solver.symbolic(sim_size):
+        size = state.solver.max(sim_size)
         if size > state.libc.max_variable_size:
             size = state.libc.max_variable_size
-    else:
-        size = state.se.eval(sim_size)
+        setattr(state.regs, arg_reg_name(p, 0), size)
 
-    addr = state.libc.heap_location
-    state.libc.heap_location += size
-    setattr(state.regs, arg_reg_name(p, 0), addr)
+    # use the sim procedure
+    plt_path.step()
+    assert _core.p.is_hooked(plt_path.active[0].addr), "malloc: Summary function relies on angr's " \
+                                                       "sim procedure, add option use_sim_procedures to the loader"
+    plt_path.step()
+
     return sim_size
 
 
@@ -330,20 +276,21 @@ def _realloc(_core, _, plt_path):
 
     state = plt_path.active[0]
     sim_size = getattr(state.regs, arg_reg_name(p, 1))
-    ptr = getattr(state.regs, arg_reg_name(p, 0))
+    # ptr = getattr(state.regs, arg_reg_name(p, 0))
 
-    if state.se.symbolic(sim_size):
-        size = state.se.max_int(sim_size)
+    # when the size is symbolic, choose the maximum size possible
+    if state.solver.symbolic(sim_size):
+        size = state.solver.max(sim_size)
         if size > state.libc.max_variable_size:
             size = state.libc.max_variable_size
-    else:
-        size = state.se.eval(sim_size)
+        setattr(state.regs, arg_reg_name(p, 0), size)
 
-    addr = state.libc.heap_location
-    v = state.memory.load(ptr, size)
-    state.memory.store(addr, v)
-    state.libc.heap_location += size
-    setattr(state.regs, arg_reg_name(p, 0), addr)
+    # if the size is not tainted, use the sim procedure
+    plt_path.step()
+    assert _core.p.is_hooked(plt_path.active[0].addr), "realloc: Summary function relies on angr's " \
+                                                       "sim procedure, add option use_sim_procedures to the loader"
+    plt_path.step()
+
     return sim_size
 
 
@@ -356,11 +303,7 @@ def heap_alloc(_core, call_site_path, plt_path):
     :param plt_path: path to the plt (i.e., call_site.step())
     :return: None
     """
-
     fname = _get_function_name(plt_path.active[0].addr, _core.p)
-
-    # step over the plt
-    plt_path.step()
 
     sim_size = None
     if fname == 'malloc':
@@ -368,7 +311,7 @@ def heap_alloc(_core, call_site_path, plt_path):
     elif fname == 'realloc':
         sim_size = _realloc(_core, call_site_path, plt_path)
     else:
-        print "Implement this heap alloc: " + fname
+        print(f"Implement this heap alloc: {fname}")
 
     if sim_size is not None:
         taint_args = [l for l in sim_size.recursive_leaf_asts if _core.is_tainted(l, call_site_path)]
@@ -376,8 +319,6 @@ def heap_alloc(_core, call_site_path, plt_path):
             arg = taint_args[0]
             if is_size_taint(arg):
                 _core.do_recursive_untaint(arg, plt_path)
-
-    _restore_caller_regs(_core, call_site_path, plt_path)
 
 
 #
@@ -394,15 +335,20 @@ def _setenv(_core, _, plt_path):
     :param plt_path: path to the plt (i.e., call_site.step())
     :return: None
     """
-
     global env_var
     p = _core.p
 
-    plt_path_cp = plt_path.copy(copy_states=True)
+    plt_path_cp = plt_path.copy(deep=True)
     plt_state_cp = plt_path_cp.active[0]
 
-    key = getattr(plt_state_cp.regs, arg_reg_name(p, 0))
-    env_var[str(key)] = getattr(plt_state_cp.regs, arg_reg_name(p, 1))
+    # add the environment variable to the list of env_variables with this key
+    key = getattr(plt_path.active[0].regs, arg_reg_name(p, 0))
+    env_var[str(key)] = getattr(plt_path.active[0].regs, arg_reg_name(p, 1))
+
+    # this call can continue with an empty sim procedure since it does nothing
+    next_state = plt_state_cp.step()
+    _core.p.hook(next_state.addr, ReturnUnconstrained())
+    plt_path.step().step()
 
 
 def _getenv(_core, call_site_addr, plt_path):
@@ -418,15 +364,13 @@ def _getenv(_core, call_site_addr, plt_path):
     p = _core.p
 
     env_var_size = _core.taint_buf_size
-    plt_path_cp = plt_path.copy(copy_states=True)
-    plt_state_cp = plt_path_cp.active[0]
 
-    reg = getattr(plt_state_cp.regs, arg_reg_name(p, 0))
-    cnt_mem = _core.safe_load(plt_path_cp, reg)
+    reg = getattr(plt_path.active[0].regs, arg_reg_name(p, 0))
+    cnt_mem = _core.safe_load(plt_path, reg)
     key = str(reg)
 
     # this info is passed by some user controllable source
-    if _core.is_tainted(reg, path=plt_path_cp) or _core.is_tainted(cnt_mem, path=plt_path_cp):
+    if _core.is_tainted(reg, path=plt_path) or _core.is_tainted(cnt_mem, path=plt_path):
         to_store = _core.get_sym_val(name=_core.taint_buf, bits=env_var_size)
     # it was set before
     elif key in env_var:
@@ -435,10 +379,19 @@ def _getenv(_core, call_site_addr, plt_path):
     else:
         to_store = _core.get_sym_val(name="env_var", bits=env_var_size)
 
-    setattr(plt_path.active[0].regs, arg_reg_name(p, 0), claripy.BVV(env_var_size, _core.p.arch.bits))
-    _malloc(_core, call_site_addr, plt_path)
-    addr = getattr(plt_path.active[0].regs, arg_reg_name(p, 0))
+    # store the symbolic buffer at the memory address
+    addr = plt_path.active[0].heap.allocate(env_var_size)
     plt_path.active[0].memory.store(addr, to_store)
+
+    # use an empty hook as sim procedure to continue with the program
+    plt_path_cp = plt_path.copy(deep=True)
+    plt_state_cp = plt_path_cp.active[0]
+    next_state = plt_state_cp.step()
+    _core.p.hook(next_state.addr, ReturnUnconstrained())
+    plt_path.step().step()
+
+    # set the return address to the pointer
+    setattr(plt_path.active[0].regs, ret_reg_name(p), addr)
 
 
 def env(_core, call_site_path, plt_path):
@@ -449,29 +402,25 @@ def env(_core, call_site_path, plt_path):
     :param plt_path: path to the plt (i.e., call_site.step())
     :return:
     """
-
     fname = _get_function_name(plt_path.active[0].addr, _core.p)
     if fname == 'setenv':
         _setenv(_core, call_site_path, plt_path)
     elif fname == 'getenv':
         _getenv(_core, call_site_path, plt_path)
     else:
-        print "Implement this Env function: " + fname
+        print(f"Implement this Env function: {fname}")
+    # return the env_var if tainted to store for bug_finders
 
-    _restore_caller_regs(_core, call_site_path, plt_path)
 
 #
 # Numerical
 #
-
-
 def atoi(_core, _, plt_path):
     p = _core.p
-    plt_path_cp = plt_path.copy(copy_states=True)
 
     state = plt_path.active[0]
     val = getattr(state.regs, arg_reg_name(p, 0))
-    if _core.is_or_points_to_tainted_data(val, plt_path_cp):
-        addr = plt_path.active[0].memory.load(val)
+    if _core.is_or_points_to_tainted_data(val, plt_path):
+        addr = plt_path.active[0].memory.load(val, p.arch.bytes)
         _core.do_recursive_untaint(addr, plt_path)
     plt_path.step().step()

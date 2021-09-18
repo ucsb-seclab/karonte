@@ -1,0 +1,13 @@
+numpy~=1.19.0
+scikit-learn~=0.24.1
+gdb~=0.0.1
+progressbar
+claripy~=9.0.5739
+archinfo~=9.0.5739
+cle~=9.0.5739
+pyvex~=9.0.5739
+networkx~=2.4
+python-magic~=0.4.16
+angr~=9.0.5739
+mpmath
+sympy
